@@ -21,6 +21,9 @@ const STAMP_SIZES = [56, 110, 170, 250];
 const CONFETTI = ['#4DA3FF', '#FFC83D', '#FF8A3D', '#B58CFF', '#FF6B6B', '#3DD6D0', '#5BD68A', '#FF9EC4'];
 const tileUrl = (id: string) => patternTile(id).toDataURL();
 
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_ANDROID = /Android/.test(navigator.userAgent);
+
 type Phase = null | 'wake' | 'printing' | 'done' | 'failed';
 
 export default function App() {
@@ -107,7 +110,7 @@ export default function App() {
         <div className="top-right">
           <button className={'btn pill face ' + face} onClick={() => { play('tap'); if (practice) setToast('Practice mode: no paper is used.'); else if (printer.connected) setToast('The printer is awake and ready!'); else { setThenPrint(false); setPhase('wake'); } }}>
             <Icon name="printer" size={26} />
-            <span>{practice ? 'Practice' : printer.state === 'unsupported' ? 'No printer' : face === 'awake' ? 'Ready' : face === 'waking' ? 'Waking…' : 'Asleep'}</span>
+            <span>{practice ? 'Practice' : printer.state === 'unsupported' ? 'Connect' : face === 'awake' ? 'Ready' : face === 'waking' ? 'Connecting…' : 'Connect'}</span>
           </button>
           <button className="btn pill" onClick={() => { play('tap'); setPanel('gallery'); }}><Icon name="grid" size={26} /><span>My stickers</span>{studio.gallery.length > 0 && <b className="count">{studio.gallery.length}</b>}</button>
           <button className="btn round" aria-label={muted ? 'Sound on' : 'Sound off'} onClick={() => { setMuted(!muted); setMute(!muted); if (muted) play('tap'); }}><Icon name={muted ? 'mute' : 'sound'} size={26} /></button>
@@ -167,17 +170,30 @@ export default function App() {
           <div className={'bigface ' + (printer.state === 'waking' ? 'waking' : 'asleep')}><Icon name="printer" size={96} /><b>z</b><b>z</b><b>z</b></div>
           {printer.state === 'unsupported' ? (
             <>
-              <h2>This screen can't reach the printer</h2>
-              <p>You can still draw and keep your stickers. Ask a grown-up about printing.</p>
-              <p className="fine">{window.isSecureContext
-                ? 'Grown-ups: this browser has no Web Bluetooth. Safari and Chrome on iPad and iPhone cannot connect to Bluetooth printers from a web page. Use Chrome on a Mac, PC or Android device, or an iPad browser app that adds Web Bluetooth, such as Bluefy (it needs an https address).'
-                : 'Grown-ups: Bluetooth only works on a secure address (https, or localhost on the computer running the app). This page was opened over plain http.'}</p>
+              <h2>This browser can't connect to the printer</h2>
+              {!window.isSecureContext ? (
+                <p className="fine">Bluetooth only works on a secure address (https, or localhost on the computer running the app). This page was opened over plain http.</p>
+              ) : IS_IOS ? (
+                <>
+                  <p className="fine">iPhones and iPads don't let Safari or Chrome use Bluetooth. The free Bluefy browser app does. Install it, then open this same address inside Bluefy and tap Connect printer.</p>
+                  <a className="btn print" href="https://apps.apple.com/app/id1492822055" target="_blank" rel="noreferrer"><Icon name="printer" size={30} /><span>Get Bluefy</span></a>
+                  <button className="btn big alt" onClick={() => { void navigator.clipboard?.writeText(location.href); setToast('Address copied. Paste it into Bluefy.'); }}>Copy this address</button>
+                </>
+              ) : IS_ANDROID ? (
+                <>
+                  <p className="fine">This browser has no Bluetooth for web pages. Chrome does.</p>
+                  <a className="btn print" href={`intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;end`}><Icon name="printer" size={30} /><span>Open in Chrome</span></a>
+                </>
+              ) : (
+                <p className="fine">This browser has no Bluetooth for web pages. Open this page in Chrome or Edge instead.</p>
+              )}
+              <p>You can still draw and keep your stickers here.</p>
             </>
           ) : (
             <>
               <h2>The printer is asleep</h2>
-              <p>Turn it on, then ask a grown-up to help wake it up.</p>
-              <button className="btn print" disabled={printer.state === 'waking'} onClick={wake}><Icon name="printer" size={36} /><span>{printer.state === 'waking' ? 'Waking up…' : 'Wake up printer'}</span></button>
+              <p>Turn it on, tap Connect printer, then pick the one called HB.</p>
+              <button className="btn print" disabled={printer.state === 'waking'} onClick={wake}><Icon name="printer" size={36} /><span>{printer.state === 'waking' ? 'Connecting…' : 'Connect printer'}</span></button>
             </>
           )}
         </Modal>

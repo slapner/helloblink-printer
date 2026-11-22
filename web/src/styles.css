@@ -114,7 +114,7 @@ input:not([type=checkbox]):not([type=range]) { height: 54px; border: 3px solid v
 .modal.center { text-align: center; justify-items: center; }
 .modal p { color: var(--mute); font-size: 19px; }
 .modal p.fine { font: 500 15px/1.4 system-ui, sans-serif; background: #FFFBEF; border-radius: 14px; padding: 12px 14px; text-align: left; }
-.modal .print { flex: none; width: 100%; }
+.modal .print { flex: none; width: 100%; text-decoration: none; }
 .close { position: absolute; top: 12px; right: 12px; width: 48px !important; min-height: 48px; z-index: 2; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: center; }
 .big { min-height: 72px; font-size: 20px; padding: 0 22px; background: #FFC83D; border-radius: 999px; }
