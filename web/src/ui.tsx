@@ -33,6 +33,8 @@ const PATHS: Record<string, string> = {
   heart: 'M12 20s-8-5-8-11a4.5 4.5 0 0 1 8-2.5A4.5 4.5 0 0 1 20 9c0 6-8 11-8 11z',
   line: 'M5 19L19 5',
   check: 'M4 12l5 5L20 6',
+  plus: 'M12 5v14 M5 12h14',
+  minus: 'M5 12h14',
 };
 export function Icon({ name, size = 32 }: { name: string; size?: number }) {
   return (
@@ -56,7 +58,7 @@ export function HoldButton({ ms = 2000, onHeld, children, label }: { ms?: number
   const start = () => { clearTimeout(t.current); setHolding(true); t.current = window.setTimeout(() => { setHolding(false); onHeld(); }, ms); };
   useEffect(() => stop, []);
   return (
-    <button className={'btn round hold' + (holding ? ' holding' : '')} style={{ ['--ms' as string]: ms + 'ms' }} aria-label={label} title={label}
+    <button className={'btn round hold' + (holding ? ' holding' : '')} style={{ ['--ms' as string]: ms + 'ms' }} aria-label={label}
       onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} onContextMenu={(e) => e.preventDefault()}>
       {children}
     </button>

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { BADGES, FONTS, FRAMES, SHAPE_IDS, STAMP_SETS, drawFrame, drawStamp, type Stamp } from './art';
-import { W, blankRows, printer } from './printer';
-import { PATTERNS, patternTile } from './raster';
+import { W, blankRows, packRows, printer } from './printer';
+import { PATTERNS, ctx2d, makeCanvas, patternTile } from './raster';
 import { isMuted, play, setMuted } from './sound';
-import { studio, type Tool } from './studio';
+import { PENS, STAMP_SIZES, studio, type Tool } from './studio';
 import { HoldButton, Icon, Mini, Modal, useStored } from './ui';
 
 const TOOLS: { id: Tool; label: string; icon: string; color: string }[] = [
@@ -16,10 +16,11 @@ const TOOLS: { id: Tool; label: string; icon: string; color: string }[] = [
   { id: 'badge', label: 'Badges', icon: 'badge', color: '#5BD68A' },
   { id: 'magic', label: 'Magic', icon: 'magic', color: '#FF9EC4' },
 ];
-const PENS = [5, 12, 24, 44];
-const STAMP_SIZES = [56, 110, 170, 250];
 const CONFETTI = ['#4DA3FF', '#FFC83D', '#FF8A3D', '#B58CFF', '#FF6B6B', '#3DD6D0', '#5BD68A', '#FF9EC4'];
 const tileUrl = (id: string) => patternTile(id).toDataURL();
+
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_ANDROID = /Android/.test(navigator.userAgent);
 
 type Phase = null | 'wake' | 'printing' | 'done' | 'failed';
 
@@ -35,7 +36,7 @@ export default function App() {
   const [thenPrint, setThenPrint] = useState(true);
   const wakeTicket = useRef(0);   // closing the wake card cancels the print that was waiting on it
   const closeWake = () => { wakeTicket.current++; setPhase(null); };
-  const [panel, setPanel] = useState<null | 'gallery' | 'camera' | 'grownups'>(null);
+  const [panel, setPanel] = useState<null | 'gallery' | 'camera' | 'gate' | 'grownups'>(null);
   const [toast, setToast] = useState('');
   const [muted, setMute] = useState(isMuted());
   const [copies, setCopies] = useState(1);
@@ -43,6 +44,7 @@ export default function App() {
   const [inset, setInset] = useStored('print-inset', 0);
   const [tail, setTail] = useStored('print-tail', 120);
   const [practice, setPractice] = useStored('practice', false);
+  const [shiftX, setShiftX] = useStored('print-shift-x', 0);
   const [thunk, setThunk] = useState(0);
 
   useEffect(() => {
@@ -56,9 +58,20 @@ export default function App() {
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 2600); return () => clearTimeout(t); }, [toast]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'z' || !(e.metaKey || e.ctrlKey)) return;
-      const a = document.activeElement as HTMLElement | null; if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) return;
-      e.preventDefault(); e.shiftKey ? studio.redo() : studio.undo();
+      const a = document.activeElement as HTMLElement | null, typing = !!a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && (a as HTMLInputElement).type !== 'range';
+      const k = (e.key ?? '').toLowerCase(), cmd = e.metaKey || e.ctrlKey, dialog = !!document.querySelector('.veil');
+      if (cmd && (k === 'p' || k === 's')) {          // never the browser's own Print or Save Page dialogs
+        e.preventDefault();
+        if (!dialog) (k === 'p' ? printRef : keepRef).current();
+        return;
+      }
+      if (typing || dialog) return;
+      if (cmd && k === 'z') { e.preventDefault(); e.shiftKey ? studio.redo() : studio.undo(); }
+      else if (cmd || e.altKey) return;
+      else if (k >= '1' && k <= '8') { play('tap'); studio.set({ tool: TOOLS[+k - 1].id }); }
+      else if (k === ']' || k === '=' || k === '+') studio.nudgeSize(1);
+      else if (k === '[' || k === '-') studio.nudgeSize(-1);
+      else if (k === 'e') { play('tap'); studio.set({ tool: 'draw', eraser: studio.opts.tool === 'draw' ? !studio.opts.eraser : true }); }
     };
     const paste = (e: ClipboardEvent) => { const f = [...(e.clipboardData?.files ?? [])][0]; if (f) loadFile(f); };
     addEventListener('keydown', key); addEventListener('paste', paste);
@@ -68,9 +81,11 @@ export default function App() {
   function pickTool(id: Tool) { play('tap'); studio.set({ tool: id }); }
   function loadFile(f?: File | null) {
     if (!f || !f.type.startsWith('image/')) return;
+    const sorry = () => { play('oops'); setToast("That picture wouldn't open. Try another one!"); };
+    if (f.size > 40 * 1024 * 1024) return sorry();                                   // absurdly large files can freeze the page
     const img = new Image();
-    img.onload = () => { studio.setPhoto(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(img.src); };
-    img.onerror = () => { play('oops'); setToast("That picture wouldn't open. Try another one!"); };
+    img.onload = () => { if (img.naturalWidth * img.naturalHeight <= 80e6) studio.setPhoto(img, img.naturalWidth, img.naturalHeight); else sorry(); URL.revokeObjectURL(img.src); };
+    img.onerror = () => { URL.revokeObjectURL(img.src); sorry(); };
     img.src = URL.createObjectURL(f);
   }
 
@@ -80,8 +95,8 @@ export default function App() {
     if (practice) {
       ok = true;
       for (let i = 0; i <= 30; i++) { setFake(i / 30); await new Promise((r) => setTimeout(r, 70)); }
-    } else ok = await printer.sendRows(studio.printRows(inset, tail, copies));
-    if (ok) { studio.keep(); play('tada'); setPhase('done'); } else { play('oops'); setPhase('failed'); }
+    } else ok = await printer.sendRows(studio.printRows(inset, tail, copies, shiftX));
+    if (ok) { if (!studio.hasPhoto) studio.keep(); play('tada'); setPhase('done'); }   // photos are only saved when someone presses Keep else { play('oops'); setPhase('failed'); }
   }
   async function onPrint() {
     if (phase === 'printing' || printer.state === 'printing') return;
@@ -96,6 +111,8 @@ export default function App() {
     if (thenPrint) await run(); else { play('magic'); setPhase(null); setToast('The printer is awake!'); }
   }
 
+  const keep = () => { const ok = studio.keep(); play(ok ? 'tap' : 'oops'); setToast(ok ? 'Saved to My stickers!' : studio.isBlank() ? 'Make a sticker first, then keep it!' : 'My stickers is full. Throw some away first.'); };
+  const printRef = useRef(onPrint), keepRef = useRef(keep); printRef.current = onPrint; keepRef.current = keep;
   const progress = practice ? fake : printer.progress;
   const face = printer.state === 'awake' || printer.state === 'printing' ? 'awake' : printer.state === 'waking' ? 'waking' : 'asleep';
 
@@ -107,17 +124,17 @@ export default function App() {
         <div className="top-right">
           <button className={'btn pill face ' + face} onClick={() => { play('tap'); if (practice) setToast('Practice mode: no paper is used.'); else if (printer.connected) setToast('The printer is awake and ready!'); else { setThenPrint(false); setPhase('wake'); } }}>
             <Icon name="printer" size={26} />
-            <span>{practice ? 'Practice' : printer.state === 'unsupported' ? 'No printer' : face === 'awake' ? 'Ready' : face === 'waking' ? 'Waking…' : 'Asleep'}</span>
+            <span>{practice ? 'Practice mode' : face === 'awake' ? (printer.name || 'Printer') + ' ready' : face === 'waking' ? 'Connecting…' : 'Connect printer'}</span>
           </button>
           <button className="btn pill" onClick={() => { play('tap'); setPanel('gallery'); }}><Icon name="grid" size={26} /><span>My stickers</span>{studio.gallery.length > 0 && <b className="count">{studio.gallery.length}</b>}</button>
           <button className="btn round" aria-label={muted ? 'Sound on' : 'Sound off'} onClick={() => { setMuted(!muted); setMute(!muted); if (muted) play('tap'); }}><Icon name={muted ? 'mute' : 'sound'} size={26} /></button>
-          <HoldButton label="Grown-ups: hold for two seconds" onHeld={() => setPanel('grownups')}><Icon name="lock" size={26} /></HoldButton>
+          <HoldButton label="Grown-ups" onHeld={() => setPanel('gate')}><Icon name="lock" size={26} /></HoldButton>
         </div>
       </header>
 
       <div className="acts acts-a">
-        <button className="btn act" disabled={!studio.canUndo} onClick={() => studio.undo()}><Icon name="undo" /><span>Undo</span></button>
-        <button className="btn act" disabled={!studio.canRedo} onClick={() => studio.redo()}><Icon name="redo" /><span>Redo</span></button>
+        <button className="btn act" title="Undo (⌘Z)" disabled={!studio.canUndo} onClick={() => studio.undo()}><Icon name="undo" /><span>Undo</span></button>
+        <button className="btn act" title="Redo (⇧⌘Z)" disabled={!studio.canRedo} onClick={() => studio.redo()}><Icon name="redo" /><span>Redo</span></button>
       </div>
 
       <section className="stage">
@@ -131,14 +148,24 @@ export default function App() {
       </section>
 
       <div className="acts acts-b">
-        <button className="btn act" onClick={() => { const ok = studio.keep(); play(ok ? 'tap' : 'oops'); setToast(ok ? 'Saved to My stickers!' : studio.isBlank() ? 'Make a sticker first, then keep it!' : 'My stickers is full. Throw some away first.'); }}><Icon name="heart" /><span>Keep</span></button>
-        <button className="btn act danger" onClick={() => studio.clear()}><Icon name="trash" /><span>Start over</span></button>
+        <button className="btn act" title="Keep (⌘S)" onClick={keep}><Icon name="heart" /><span>Keep</span></button>
+        <button className="btn act danger" title="Start over (you can undo it)" onClick={() => studio.clear()}><Icon name="trash" /><span>Start over</span></button>
       </div>
 
+      <aside className="shelf" aria-label="My stickers">
+        <button className="shelf-title" onClick={() => { play('tap'); setPanel('gallery'); }} title="See all my stickers"><Icon name="grid" size={22} /><span>Mine</span></button>
+        <div className="shelf-list">
+          {studio.gallery.slice(0, 8).map((g, i) => (
+            <button className="thumb" key={g.slice(-48) + i} aria-label={'Open sticker ' + (i + 1)} title="Open this sticker" onClick={() => studio.open(g)}><img src={g} alt="" /></button>
+          ))}
+          {studio.gallery.length === 0 && [0, 1, 2].map((i) => <i className="thumb empty" key={i}><Icon name="heart" size={22} /></i>)}
+        </div>
+      </aside>
+
       <nav className="rail" aria-label="Tools">
-        {TOOLS.map((t) => (
-          <button key={t.id} className="btn tool" aria-pressed={o.tool === t.id} style={{ '--c': t.color } as CSSProperties} onClick={() => pickTool(t.id)}>
-            <Icon name={t.icon} size={34} /><span>{t.label}</span>
+        {TOOLS.map((t, i) => (
+          <button key={t.id} className="btn tool" title={`${t.label} (press ${i + 1})`} aria-pressed={o.tool === t.id} style={{ '--c': t.color } as CSSProperties} onClick={() => pickTool(t.id)}>
+            <Icon name={t.icon} size={34} /><span>{t.label}</span><kbd>{i + 1}</kbd>
           </button>
         ))}
       </nav>
@@ -148,14 +175,14 @@ export default function App() {
       </section>
 
       <footer className="go">
-        <button className="btn surprise" onClick={() => studio.surprise()}><Icon name="spark" size={34} /><span>Surprise me!</span></button>
+        <button className="btn surprise" title="Make a random sticker" onClick={() => studio.surprise()}><Icon name="spark" size={34} /><span>Surprise me!</span></button>
         <button className="btn copy cycle" aria-label={'How many stickers: ' + copies} onClick={() => { play('tap'); setCopies((copies % 3) + 1); }}>×{copies}</button>
         <div className="copies" role="group" aria-label="How many stickers">
           {[1, 2, 3].map((n) => (
             <button key={n} className="btn copy" aria-pressed={copies === n} onClick={() => { play('tap'); setCopies(n); }}>×{n}</button>
           ))}
         </div>
-        <button className={'btn print' + (studio.canUndo ? ' wiggle' : '')} onClick={onPrint} disabled={phase === 'printing'}>
+        <button className={'btn print' + (studio.canUndo ? ' wiggle' : '')} title="Print (⌘P)" onClick={onPrint} disabled={phase === 'printing'}>
           <Icon name="printer" size={40} /><span>Print!</span>
         </button>
       </footer>
@@ -167,17 +194,30 @@ export default function App() {
           <div className={'bigface ' + (printer.state === 'waking' ? 'waking' : 'asleep')}><Icon name="printer" size={96} /><b>z</b><b>z</b><b>z</b></div>
           {printer.state === 'unsupported' ? (
             <>
-              <h2>This screen can't reach the printer</h2>
-              <p>You can still draw and keep your stickers. Ask a grown-up about printing.</p>
-              <p className="fine">{window.isSecureContext
-                ? 'Grown-ups: this browser has no Web Bluetooth. Safari and Chrome on iPad and iPhone cannot connect to Bluetooth printers from a web page. Use Chrome on a Mac, PC or Android device, or an iPad browser app that adds Web Bluetooth, such as Bluefy (it needs an https address).'
-                : 'Grown-ups: Bluetooth only works on a secure address (https, or localhost on the computer running the app). This page was opened over plain http.'}</p>
+              <h2>This browser can't connect to the printer</h2>
+              {!window.isSecureContext ? (
+                <p className="fine">Bluetooth only works on a secure address (https, or localhost on the computer running the app). This page was opened over plain http.</p>
+              ) : IS_IOS ? (
+                <>
+                  <p className="fine">iPhones and iPads don't let Safari or Chrome use Bluetooth. The free Bluefy browser app does. Install it, then open this same address inside Bluefy and tap Connect printer.</p>
+                  <a className="btn print" href="https://apps.apple.com/app/id1492822055" target="_blank" rel="noreferrer"><Icon name="printer" size={30} /><span>Get Bluefy</span></a>
+                  <button className="btn big alt" onClick={async () => { try { await navigator.clipboard.writeText(location.href); setToast('Address copied. Paste it into Bluefy.'); } catch { setToast('Type this into Bluefy: ' + location.host + location.pathname.replace(/\/$/, '')); } }}>Copy this address</button>
+                </>
+              ) : IS_ANDROID ? (
+                <>
+                  <p className="fine">This browser has no Bluetooth for web pages. Chrome does.</p>
+                  <a className="btn print" href={`intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;end`}><Icon name="printer" size={30} /><span>Open in Chrome</span></a>
+                </>
+              ) : (
+                <p className="fine">This browser has no Bluetooth for web pages. Open this page in Chrome or Edge instead.</p>
+              )}
+              <p>You can still draw and keep your stickers here.</p>
             </>
           ) : (
             <>
               <h2>The printer is asleep</h2>
-              <p>Turn it on, then ask a grown-up to help wake it up.</p>
-              <button className="btn print" disabled={printer.state === 'waking'} onClick={wake}><Icon name="printer" size={36} /><span>{printer.state === 'waking' ? 'Waking up…' : 'Wake up printer'}</span></button>
+              <p>Turn it on, tap Connect printer, then pick the one called HB.</p>
+              <button className="btn print" disabled={printer.state === 'waking'} onClick={wake}><Icon name="printer" size={36} /><span>{printer.state === 'waking' ? 'Connecting…' : 'Connect printer'}</span></button>
             </>
           )}
         </Modal>
@@ -224,6 +264,7 @@ export default function App() {
         </Modal>
       )}
       {panel === 'camera' && <Camera onClose={() => setPanel(null)} />}
+      {panel === 'gate' && <Gate onClose={() => setPanel(null)} onPass={() => setPanel('grownups')} />}
       {panel === 'grownups' && (
         <Modal onClose={() => setPanel(null)} label="Grown-ups" className="grown">
           <h2>Grown-ups</h2>
@@ -236,8 +277,11 @@ export default function App() {
           </div>
           <label className="check"><input type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} /> Practice mode: Print plays the animation but sends nothing to the printer</label>
           <label>Shrink the print towards the middle: {inset} dots<input type="range" min={0} max={80} value={inset} onChange={(e) => setInset(+e.target.value)} /></label>
+          <label>Move the print sideways: {shiftX} dots ({shiftX < 0 ? 'left' : shiftX > 0 ? 'right' : 'centred'})<input type="range" min={-40} max={40} value={shiftX} onChange={(e) => setShiftX(+e.target.value)} /></label>
+          <div className="row"><button className="btn small" disabled={printer.state !== 'awake'} onClick={() => void printer.sendRows(rulerRows())}>Print alignment ruler (uses about 2 stickers)</button></div>
           <label>Blank rows fed after each sticker<input type="number" min={0} max={2000} value={tail} onChange={(e) => setTail(Math.max(0, Math.min(2000, +e.target.value || 0)))} /></label>
           <RawHex />
+          <div className="row"><button className="btn small" onClick={() => { if (confirm('Erase the sticker on screen, everything in My stickers, and the saved name? This cannot be undone.')) { studio.eraseAll(); setName(''); setToast('Everything erased.'); } }}>Erase everything saved on this computer</button></div>
           <pre className="log">{printer.log.map((l, i) => <div key={i} className={l.bad ? 'bad' : ''}>{l.text}</div>)}</pre>
         </Modal>
       )}
@@ -261,7 +305,7 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
           {PENS.map((s) => (
             <button key={s} className="btn chip" aria-pressed={(o.eraser ? o.eraserSize : o.pen) === s} aria-label={'Size ' + s} onClick={tap(() => studio.set(o.eraser ? { eraserSize: s } : { pen: s }))}><i className="dot" style={{ width: Math.min(40, s), height: Math.min(40, s) }} /></button>
           ))}
-          <button className="btn chip wide" aria-pressed={o.eraser} onClick={tap(() => studio.set({ eraser: !o.eraser }))}><Icon name="eraser" /><span>Rub out</span></button>
+          <button className="btn chip wide" title="Rub out (press E)" aria-pressed={o.eraser} onClick={tap(() => studio.set({ eraser: !o.eraser }))}><Icon name="eraser" /><span>Rub out</span></button>
         </div>
         <div className="group">{patterns(o.pattern, (id) => studio.set({ pattern: id, eraser: false }))}</div>
         <div className="group">
@@ -330,11 +374,25 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
           <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = ''; }} />
         </div>
         {studio.photo ? (
-          <div className="group">
-            {studio.canTunePhoto && <button className="btn chip wide" disabled={studio.photoLevel >= 2} onClick={() => studio.setPhotoLevel(studio.photoLevel + 1)}><Icon name="sun" /><span>Lighter</span></button>}
-            {studio.canTunePhoto && <button className="btn chip wide" disabled={studio.photoLevel <= -2} onClick={() => studio.setPhotoLevel(studio.photoLevel - 1)}><Icon name="moon" /><span>Darker</span></button>}
-            <button className="btn chip wide" onClick={() => studio.removePhoto()}><Icon name="trash" /><span>Take away</span></button>
-          </div>
+          <>
+            {studio.canTunePhoto ? (
+              <>
+                <p className="hint">Drag the photo to move it. Pinch or scroll to make it bigger or smaller.</p>
+                <div className="group">
+                  <button className="btn chip wide" title="Bigger (press ])" onClick={() => studio.zoomPhoto(1.15)}><Icon name="plus" /><span>Bigger</span></button>
+                  <button className="btn chip wide" title="Smaller (press [)" onClick={() => studio.zoomPhoto(1 / 1.15)}><Icon name="minus" /><span>Smaller</span></button>
+                  <button className="btn chip wide" onClick={() => studio.fitPhoto()}><Icon name="frame" /><span>Fit</span></button>
+                </div>
+                <div className="group">
+                  <button className="btn chip wide" disabled={studio.photoLevel >= 2} onClick={() => studio.setPhotoLevel(studio.photoLevel + 1)}><Icon name="sun" /><span>Lighter</span></button>
+                  <button className="btn chip wide" disabled={studio.photoLevel <= -2} onClick={() => studio.setPhotoLevel(studio.photoLevel - 1)}><Icon name="moon" /><span>Darker</span></button>
+                </div>
+              </>
+            ) : <p className="hint">To move or resize this photo, pick it again.</p>}
+            <div className="group">
+              <button className="btn chip wide" onClick={() => studio.removePhoto()}><Icon name="trash" /><span>Take away</span></button>
+            </div>
+          </>
         ) : <p className="hint">Add a photo, then draw and stamp on top of it.</p>}
       </>
     );
@@ -380,6 +438,38 @@ function Camera({ onClose }: { onClose: () => void }) {
       )}
     </Modal>
   );
+}
+
+/** A sum a small child can't do, so the settings (and the raw printer commands in them) stay with adults. */
+function Gate({ onClose, onPass }: { onClose: () => void; onPass: () => void }) {
+  const [q] = useState(() => [12 + Math.floor(Math.random() * 8), 6 + Math.floor(Math.random() * 4)]);
+  const [v, setV] = useState('');
+  return (
+    <Modal onClose={onClose} label="Grown-ups only" className="center">
+      <h2>Grown-ups only</h2>
+      <p className="sum">What is {q[0]} × {q[1]}?</p>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); if (+v === q[0] * q[1]) onPass(); else { play('oops'); onClose(); } }}>
+        <input className="answer" inputMode="numeric" autoFocus value={v} aria-label="Answer" onChange={(e) => setV(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+        <button className="btn big" type="submit">OK</button>
+      </form>
+    </Modal>
+  );
+}
+
+/** A 900-row ruler: numbered lines every 50 rows and numbered columns every 48 dots, to read off where stickers start and end. */
+function rulerRows(): Uint8Array[] {
+  const h = 900, c = makeCanvas(W, h), x = ctx2d(c);
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, h); x.fillStyle = '#000'; x.font = 'bold 20px Helvetica, Arial, sans-serif'; x.textBaseline = 'top';
+  for (let y = 0; y < h; y += 10) {
+    if (y % 50 === 0) { x.fillRect(0, y, W, 2); for (const tx of [30, 150, 270]) x.fillText(String(y), tx, y + 5); }
+    else { x.fillRect(0, y, 10, 1); x.fillRect(W / 2 - 5, y, 10, 1); x.fillRect(W - 10, y, 10, 1); }
+  }
+  x.font = 'bold 14px Helvetica, Arial, sans-serif';
+  for (let i = 0; i <= 8; i++) { const cx = Math.min(W - 2, i * 48); x.fillRect(cx, 0, 2, h); for (let y = 30; y < h; y += 100) x.fillText(String(i), Math.min(W - 12, cx + 4), y); }
+  x.fillRect(0, 0, 2, h); x.fillRect(W - 2, 0, 2, h);
+  const d = x.getImageData(0, 0, W, h).data, bits = new Uint8Array(W * h);
+  for (let i = 0; i < W * h; i++) bits[i] = d[i * 4] < 128 ? 1 : 0;
+  return packRows(bits, h);
 }
 
 function RawHex() {
