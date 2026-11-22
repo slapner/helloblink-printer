@@ -28,14 +28,14 @@ async function open(width, height, dsf = 2) {
   const tap = async (fx, fy) => { const [x, y] = await at(fx, fy); await page.mouse.click(x, y); };
   const tool = (name) => page.locator('.rail .tool', { hasText: name }).click();
   const shot = async (name) => { await page.mouse.move(2, 2); await page.waitForTimeout(350); await page.screenshot({ path: `${out}/${name}.png` }); };
-  const ink = () => page.evaluate(async () => { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); const c = document.querySelector('.sticker canvas'); const d = c.getContext('2d').getImageData(0, 0, 384, 384).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 60 && d[i + 2] < 60) n++; return n; });
+  const ink = () => page.evaluate(() => window.__studio.bits().reduce((n, b) => n + b, 0));   // the sticker's own dots, not the screen
   return { page, drag, tap, tool, shot, ink, ctx };
 }
 const checks = {};
 
-// ---------- iPad portrait ----------
+// ---------- MacBook ----------
 {
-  const { page, drag, tap, tool, shot, ink, ctx } = await open(820, 1106);
+  const { page, drag, tap, tool, shot, ink, ctx } = await open(1440, 780);
   checks.blankAtStart = await ink();
   await page.locator('.print').click(); await page.waitForTimeout(200);
   checks.blankPrintToast = await page.locator('.toast').innerText();
@@ -90,7 +90,7 @@ const checks = {};
   await page.locator('.acts button', { hasText: 'Undo' }).click();
 
   // print: asleep -> wake -> printing -> ta-da
-  await page.locator('.copy', { hasText: '×2' }).click();
+  await page.locator('.copies .copy', { hasText: '×2' }).click();
   await page.locator('.go .print').click(); await shot('09-printer-asleep');
   await page.locator('.modal .print').click(); await page.waitForTimeout(450); await shot('10-printing');
   await page.waitForSelector('.tada', { timeout: 30000 }); await page.waitForTimeout(700); await page.screenshot({ path: `${out}/11-printed.png` });
@@ -109,11 +109,12 @@ const checks = {};
   const before = await ink(); await page.waitForTimeout(600); await page.reload(); await page.waitForSelector('canvas'); await page.waitForTimeout(600); checks.survivesReload = [before, await ink()];
   await ctx.close();
 }
-// ---------- iPad landscape, small iPad, phone ----------
-for (const [name, w, h] of [['20-ipad-landscape', 1180, 745], ['21-ipad-mini-portrait', 744, 1059], ['22-ipad-small-landscape', 1024, 690], ['23-phone', 390, 750], ['24-phone-small', 360, 660], ['25-phone-landscape', 844, 390], ['26-short-window', 900, 600]]) {
+// ---------- other window sizes ----------
+for (const [name, w, h] of [['20-mac-1280x720', 1280, 720], ['21-mac-1680x960', 1680, 960], ['22-small-window', 1024, 640], ['23-tablet-portrait', 820, 1106], ['24-phone', 390, 750], ['25-phone-landscape', 844, 390]]) {
   const { page, tool, tap, shot, ctx } = await open(w, h, /phone/.test(name) ? 3 : 2);
   await page.locator('.surprise').click(); await page.locator('.rail .tool').nth(2).click();
-  checks[name] = await page.evaluate(() => ({ canvas: document.querySelector('.sticker canvas').clientWidth, crisp: document.querySelector('.sticker canvas').classList.contains('crisp'), scrollsX: document.documentElement.scrollWidth > innerWidth, scrollsY: document.documentElement.scrollHeight > innerHeight }));
+  if (w >= 1000) { await page.keyboard.press('1'); await page.keyboard.press(']'); checks[name + '-keys'] = await page.evaluate(() => [window.__studio.opts.tool, window.__studio.opts.pen]); await page.keyboard.press('3'); }
+  checks[name] = await page.evaluate(() => ({ canvas: document.querySelector('.sticker canvas').clientWidth, crisp: document.querySelector('.sticker canvas').classList.contains('crisp'), labels: getComputedStyle(document.querySelector('.tool span')).display !== 'none', scrollsX: document.documentElement.scrollWidth > innerWidth, scrollsY: document.documentElement.scrollHeight > innerHeight }));
   await shot(name); await ctx.close();
 }
 await browser.close();

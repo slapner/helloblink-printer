@@ -10,6 +10,8 @@ export interface Opts { tool: Tool; pen: number; eraserSize: number; eraser: boo
 interface Snap { ink: ImageData; photo: HTMLCanvasElement | null; grey: Float32Array | null; level: number; doc: Doc }
 
 const C = W / 2;
+export const PENS = [5, 12, 24, 44];
+export const STAMP_SIZES = [56, 110, 170, 250];
 const EMPTY: Doc = { frame: 'none', frameEmoji: '⭐', top: '', mid: '', bottom: '', font: 0 };
 const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
 const SAVE_KEY = 'sticker-now', GALLERY_KEY = 'sticker-gallery', GALLERY_MAX = 24;
@@ -29,6 +31,7 @@ export class Studio {
   private view: HTMLCanvasElement | null = null;
   private queued = false; private saveTimer = 0;
   private ghost: { x: number; y: number } | null = null;
+  private hover: [number, number] | null = null;   // mouse position, for the brush ring
   private stroke: { id: number; last: [number, number][] } | null = null;
   private stamping: number | null = null;
   private lastEdit = '';
@@ -44,6 +47,14 @@ export class Studio {
   get canRedo() { return this.redoStack.length > 0; }
 
   set(o: Partial<Opts>) { this.opts = { ...this.opts, ...o }; this.ghost = null; this.emit(); this.render(); }
+
+  /** Next bigger or smaller pen, eraser or stamp, whichever is in use. */
+  nudgeSize(dir: 1 | -1) {
+    const o = this.opts, stamp = o.tool === 'stamp', list = stamp ? STAMP_SIZES : PENS, now = stamp ? o.stampSize : o.eraser ? o.eraserSize : o.pen;
+    const i = Math.max(0, Math.min(list.length - 1, list.indexOf(now) + dir)), keepGhost = this.ghost, keepHover = this.hover;
+    if (list[i] === now) return;
+    this.set(stamp ? { stampSize: list[i] } : o.eraser ? { eraserSize: list[i] } : { pen: list[i] }); this.ghost = keepGhost; this.hover = keepHover; this.render();
+  }
 
   // ---- history ----
   private snap(): Snap { return { ink: this.ictx.getImageData(0, 0, W, H), photo: this.photo, grey: this.grey, level: this.photoLevel, doc: { ...this.doc } }; }
@@ -115,6 +126,7 @@ export class Studio {
       else { if (t !== 'draw') this.set({ tool: 'draw' }); this.begin(); this.stroke = { id: e.pointerId, last: [] }; this.extend([p]); this.emit(); }
     };
     const move = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && this.opts.tool === 'draw') { this.hover = pt(e); this.render(); }
       if (this.stroke && e.pointerId === this.stroke.id) {
         const evs = e.getCoalescedEvents?.() ?? []; this.extend(evs.length ? evs.map(pt) : [pt(e)]);
       } else if (this.opts.tool === 'stamp' && (this.stamping === e.pointerId || e.pointerType === 'mouse')) {
@@ -130,12 +142,19 @@ export class Studio {
         this.render();
       }
     };
-    const leave = () => { if (this.stamping === null && this.ghost) { this.ghost = null; this.render(); } };
+    const leave = () => { if (this.hover) { this.hover = null; this.render(); } if (this.stamping === null && this.ghost) { this.ghost = null; this.render(); } };
+    let spun = 0;
+    const wheel = (e: WheelEvent) => {   // scroll over the sticker to change pen or stamp size
+      if (this.opts.tool !== 'draw' && this.opts.tool !== 'stamp') return;
+      e.preventDefault(); spun += e.deltaY;
+      if (Math.abs(spun) >= 50) { this.nudgeSize(spun < 0 ? 1 : -1); spun = 0; }
+    };
+    view.addEventListener('wheel', wheel, { passive: false });
     view.addEventListener('pointerdown', down); view.addEventListener('pointermove', move);
     view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up); view.addEventListener('pointerleave', leave);
     this.render();
     return () => {
-      view.removeEventListener('pointerdown', down); view.removeEventListener('pointermove', move);
+      view.removeEventListener('wheel', wheel); view.removeEventListener('pointerdown', down); view.removeEventListener('pointermove', move);
       view.removeEventListener('pointerup', up); view.removeEventListener('pointercancel', up); view.removeEventListener('pointerleave', leave);
       if (this.view === view) this.view = null;
     };
@@ -154,6 +173,10 @@ export class Studio {
       const n = this.opts.mirror === 2 ? 1 : this.opts.mirror === 4 ? 2 : 6;
       for (let i = 0; i < n; i++) { const a = Math.PI / 2 + (i * Math.PI) / n; c.beginPath(); c.moveTo(C - 200 * Math.cos(a), C - 200 * Math.sin(a)); c.lineTo(C + 200 * Math.cos(a), C + 200 * Math.sin(a)); c.stroke(); }
       c.restore();
+    }
+    if (this.hover && this.opts.tool === 'draw') {
+      const r = Math.max(2, (this.opts.eraser ? this.opts.eraserSize : this.opts.pen) / 2);
+      c.save(); c.beginPath(); c.arc(this.hover[0], this.hover[1], r, 0, Math.PI * 2); c.lineWidth = 3; c.strokeStyle = '#fff'; c.stroke(); c.lineWidth = 1.5; c.strokeStyle = '#4DA3FF'; c.stroke(); c.restore();
     }
     if (this.ghost && this.opts.tool === 'stamp') { c.save(); c.globalAlpha = 0.6; drawStamp(c, this.opts.stamp, this.ghost.x, this.ghost.y, this.opts.stampSize); c.restore(); }
   }
@@ -302,3 +325,4 @@ export class Studio {
 }
 
 export const studio = new Studio();
+(window as unknown as { __studio: Studio }).__studio = studio;   // handy in the console and for scripts/tour.mjs

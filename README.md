@@ -4,7 +4,9 @@ Talks to a HelloBlink sticker printer (advertises over Bluetooth LE as `HB-xxxx`
 
 ## Web app: Sticker Studio
 
-A sticker-making studio for children, laid out for a phone first (everything on one screen), with tablet and laptop layouts. React + TypeScript + Vite, in `web/`.
+A sticker-making studio for children, made for a MacBook in Chrome: tools on the left, the sticker in the middle, options and Print on the right. Narrow windows, tablets and phones get fallback layouts. React + TypeScript + Vite, in `web/`.
+
+Mouse and keyboard: scroll over the sticker to change pen or stamp size, `1`–`8` pick a tool, `[` `]` change size, `E` rubs out, `⌘Z` / `⇧⌘Z` undo and redo, `⌘S` keeps the sticker, `⌘P` prints it.
 
 ```
 cd web

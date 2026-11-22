@@ -3,7 +3,7 @@ import { BADGES, FONTS, FRAMES, SHAPE_IDS, STAMP_SETS, drawFrame, drawStamp, typ
 import { W, blankRows, printer } from './printer';
 import { PATTERNS, patternTile } from './raster';
 import { isMuted, play, setMuted } from './sound';
-import { studio, type Tool } from './studio';
+import { PENS, STAMP_SIZES, studio, type Tool } from './studio';
 import { HoldButton, Icon, Mini, Modal, useStored } from './ui';
 
 const TOOLS: { id: Tool; label: string; icon: string; color: string }[] = [
@@ -16,8 +16,6 @@ const TOOLS: { id: Tool; label: string; icon: string; color: string }[] = [
   { id: 'badge', label: 'Badges', icon: 'badge', color: '#5BD68A' },
   { id: 'magic', label: 'Magic', icon: 'magic', color: '#FF9EC4' },
 ];
-const PENS = [5, 12, 24, 44];
-const STAMP_SIZES = [56, 110, 170, 250];
 const CONFETTI = ['#4DA3FF', '#FFC83D', '#FF8A3D', '#B58CFF', '#FF6B6B', '#3DD6D0', '#5BD68A', '#FF9EC4'];
 const tileUrl = (id: string) => patternTile(id).toDataURL();
 
@@ -59,9 +57,17 @@ export default function App() {
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 2600); return () => clearTimeout(t); }, [toast]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'z' || !(e.metaKey || e.ctrlKey)) return;
-      const a = document.activeElement as HTMLElement | null; if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) return;
-      e.preventDefault(); e.shiftKey ? studio.redo() : studio.undo();
+      const a = document.activeElement as HTMLElement | null, typing = !!a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && (a as HTMLInputElement).type !== 'range';
+      const k = e.key.toLowerCase(), cmd = e.metaKey || e.ctrlKey;
+      if (cmd && k === 'p') { e.preventDefault(); printRef.current(); return; }          // never the browser's own print dialog
+      if (typing || document.querySelector('.veil')) return;
+      if (cmd && k === 'z') { e.preventDefault(); e.shiftKey ? studio.redo() : studio.undo(); }
+      else if (cmd && k === 's') { e.preventDefault(); keepRef.current(); }
+      else if (cmd || e.altKey) return;
+      else if (k >= '1' && k <= '8') { play('tap'); studio.set({ tool: TOOLS[+k - 1].id }); }
+      else if (k === ']' || k === '=' || k === '+') studio.nudgeSize(1);
+      else if (k === '[' || k === '-') studio.nudgeSize(-1);
+      else if (k === 'e') { play('tap'); studio.set({ tool: 'draw', eraser: !studio.opts.eraser }); }
     };
     const paste = (e: ClipboardEvent) => { const f = [...(e.clipboardData?.files ?? [])][0]; if (f) loadFile(f); };
     addEventListener('keydown', key); addEventListener('paste', paste);
@@ -99,6 +105,8 @@ export default function App() {
     if (thenPrint) await run(); else { play('magic'); setPhase(null); setToast('The printer is awake!'); }
   }
 
+  const keep = () => { const ok = studio.keep(); play(ok ? 'tap' : 'oops'); setToast(ok ? 'Saved to My stickers!' : studio.isBlank() ? 'Make a sticker first, then keep it!' : 'My stickers is full. Throw some away first.'); };
+  const printRef = useRef(onPrint), keepRef = useRef(keep); printRef.current = onPrint; keepRef.current = keep;
   const progress = practice ? fake : printer.progress;
   const face = printer.state === 'awake' || printer.state === 'printing' ? 'awake' : printer.state === 'waking' ? 'waking' : 'asleep';
 
@@ -110,7 +118,7 @@ export default function App() {
         <div className="top-right">
           <button className={'btn pill face ' + face} onClick={() => { play('tap'); if (practice) setToast('Practice mode: no paper is used.'); else if (printer.connected) setToast('The printer is awake and ready!'); else { setThenPrint(false); setPhase('wake'); } }}>
             <Icon name="printer" size={26} />
-            <span>{practice ? 'Practice' : printer.state === 'unsupported' ? 'Connect' : face === 'awake' ? 'Ready' : face === 'waking' ? 'Connecting…' : 'Connect'}</span>
+            <span>{practice ? 'Practice mode' : face === 'awake' ? (printer.name || 'Printer') + ' ready' : face === 'waking' ? 'Connecting…' : 'Connect printer'}</span>
           </button>
           <button className="btn pill" onClick={() => { play('tap'); setPanel('gallery'); }}><Icon name="grid" size={26} /><span>My stickers</span>{studio.gallery.length > 0 && <b className="count">{studio.gallery.length}</b>}</button>
           <button className="btn round" aria-label={muted ? 'Sound on' : 'Sound off'} onClick={() => { setMuted(!muted); setMute(!muted); if (muted) play('tap'); }}><Icon name={muted ? 'mute' : 'sound'} size={26} /></button>
@@ -119,8 +127,8 @@ export default function App() {
       </header>
 
       <div className="acts acts-a">
-        <button className="btn act" disabled={!studio.canUndo} onClick={() => studio.undo()}><Icon name="undo" /><span>Undo</span></button>
-        <button className="btn act" disabled={!studio.canRedo} onClick={() => studio.redo()}><Icon name="redo" /><span>Redo</span></button>
+        <button className="btn act" title="Undo (⌘Z)" disabled={!studio.canUndo} onClick={() => studio.undo()}><Icon name="undo" /><span>Undo</span></button>
+        <button className="btn act" title="Redo (⇧⌘Z)" disabled={!studio.canRedo} onClick={() => studio.redo()}><Icon name="redo" /><span>Redo</span></button>
       </div>
 
       <section className="stage">
@@ -134,14 +142,24 @@ export default function App() {
       </section>
 
       <div className="acts acts-b">
-        <button className="btn act" onClick={() => { const ok = studio.keep(); play(ok ? 'tap' : 'oops'); setToast(ok ? 'Saved to My stickers!' : studio.isBlank() ? 'Make a sticker first, then keep it!' : 'My stickers is full. Throw some away first.'); }}><Icon name="heart" /><span>Keep</span></button>
-        <button className="btn act danger" onClick={() => studio.clear()}><Icon name="trash" /><span>Start over</span></button>
+        <button className="btn act" title="Keep (⌘S)" onClick={keep}><Icon name="heart" /><span>Keep</span></button>
+        <button className="btn act danger" title="Start over (you can undo it)" onClick={() => studio.clear()}><Icon name="trash" /><span>Start over</span></button>
       </div>
 
+      <aside className="shelf" aria-label="My stickers">
+        <button className="shelf-title" onClick={() => { play('tap'); setPanel('gallery'); }} title="See all my stickers"><Icon name="grid" size={22} /><span>Mine</span></button>
+        <div className="shelf-list">
+          {studio.gallery.slice(0, 8).map((g, i) => (
+            <button className="thumb" key={g.slice(-48) + i} aria-label={'Open sticker ' + (i + 1)} title="Open this sticker" onClick={() => studio.open(g)}><img src={g} alt="" /></button>
+          ))}
+          {studio.gallery.length === 0 && [0, 1, 2].map((i) => <i className="thumb empty" key={i}><Icon name="heart" size={22} /></i>)}
+        </div>
+      </aside>
+
       <nav className="rail" aria-label="Tools">
-        {TOOLS.map((t) => (
-          <button key={t.id} className="btn tool" aria-pressed={o.tool === t.id} style={{ '--c': t.color } as CSSProperties} onClick={() => pickTool(t.id)}>
-            <Icon name={t.icon} size={34} /><span>{t.label}</span>
+        {TOOLS.map((t, i) => (
+          <button key={t.id} className="btn tool" title={`${t.label} (press ${i + 1})`} aria-pressed={o.tool === t.id} style={{ '--c': t.color } as CSSProperties} onClick={() => pickTool(t.id)}>
+            <Icon name={t.icon} size={34} /><span>{t.label}</span><kbd>{i + 1}</kbd>
           </button>
         ))}
       </nav>
@@ -151,14 +169,14 @@ export default function App() {
       </section>
 
       <footer className="go">
-        <button className="btn surprise" onClick={() => studio.surprise()}><Icon name="spark" size={34} /><span>Surprise me!</span></button>
+        <button className="btn surprise" title="Make a random sticker" onClick={() => studio.surprise()}><Icon name="spark" size={34} /><span>Surprise me!</span></button>
         <button className="btn copy cycle" aria-label={'How many stickers: ' + copies} onClick={() => { play('tap'); setCopies((copies % 3) + 1); }}>×{copies}</button>
         <div className="copies" role="group" aria-label="How many stickers">
           {[1, 2, 3].map((n) => (
             <button key={n} className="btn copy" aria-pressed={copies === n} onClick={() => { play('tap'); setCopies(n); }}>×{n}</button>
           ))}
         </div>
-        <button className={'btn print' + (studio.canUndo ? ' wiggle' : '')} onClick={onPrint} disabled={phase === 'printing'}>
+        <button className={'btn print' + (studio.canUndo ? ' wiggle' : '')} title="Print (⌘P)" onClick={onPrint} disabled={phase === 'printing'}>
           <Icon name="printer" size={40} /><span>Print!</span>
         </button>
       </footer>
@@ -277,7 +295,7 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
           {PENS.map((s) => (
             <button key={s} className="btn chip" aria-pressed={(o.eraser ? o.eraserSize : o.pen) === s} aria-label={'Size ' + s} onClick={tap(() => studio.set(o.eraser ? { eraserSize: s } : { pen: s }))}><i className="dot" style={{ width: Math.min(40, s), height: Math.min(40, s) }} /></button>
           ))}
-          <button className="btn chip wide" aria-pressed={o.eraser} onClick={tap(() => studio.set({ eraser: !o.eraser }))}><Icon name="eraser" /><span>Rub out</span></button>
+          <button className="btn chip wide" title="Rub out (press E)" aria-pressed={o.eraser} onClick={tap(() => studio.set({ eraser: !o.eraser }))}><Icon name="eraser" /><span>Rub out</span></button>
         </div>
         <div className="group">{patterns(o.pattern, (id) => studio.set({ pattern: id, eraser: false }))}</div>
         <div className="group">
