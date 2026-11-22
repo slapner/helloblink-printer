@@ -14,6 +14,8 @@ export const PENS = [5, 12, 24, 44];
 export const STAMP_SIZES = [56, 110, 170, 250];
 const EMPTY: Doc = { frame: 'none', frameEmoji: '⭐', top: '', mid: '', bottom: '', font: 0 };
 const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
+const isPng = (v: unknown): v is string => typeof v === 'string' && v.startsWith('data:image/png;base64,');   // saved pictures are only ever our own PNGs
+const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
 const SAVE_KEY = 'sticker-now', GALLERY_KEY = 'sticker-gallery', GALLERY_MAX = 24;
 
 export class Studio {
@@ -305,12 +307,14 @@ export class Studio {
   }
   private restore() {
     try {
-      this.gallery = JSON.parse(localStorage.getItem(GALLERY_KEY) ?? '[]');
-      const s = JSON.parse(localStorage.getItem(SAVE_KEY) ?? 'null'); if (!s) return;
-      this.doc = { ...EMPTY, ...s.doc };
+      const g: unknown = JSON.parse(localStorage.getItem(GALLERY_KEY) ?? '[]');
+      this.gallery = Array.isArray(g) ? g.filter(isPng).slice(0, GALLERY_MAX) : [];
+      const s = JSON.parse(localStorage.getItem(SAVE_KEY) ?? 'null'); if (!s || typeof s !== 'object') return;
+      const d = (s.doc && typeof s.doc === 'object' ? s.doc : {}) as Record<string, unknown>;
+      this.doc = { frame: (FRAMES as readonly string[]).includes(d.frame as string) ? (d.frame as string) : 'none', frameEmoji: str(d.frameEmoji, 8) || '⭐', top: str(d.top, 28), mid: str(d.mid, 18), bottom: str(d.bottom, 24), font: [0, 1, 2, 3].includes(d.font as number) ? (d.font as number) : 0 };
       const load = (url: string, fn: (i: HTMLImageElement) => void) => { const i = new Image(); i.onload = () => { fn(i); this.emit(); this.render(); }; i.src = url; };
-      if (s.ink) load(s.ink, (i) => this.ictx.drawImage(i, 0, 0));
-      if (s.photo) load(s.photo, (i) => { const c = makeCanvas(); ctx2d(c).drawImage(i, 0, 0); this.photo = c; });
+      if (isPng(s.ink)) load(s.ink, (i) => this.ictx.drawImage(i, 0, 0));
+      if (isPng(s.photo)) load(s.photo, (i) => { const c = makeCanvas(); ctx2d(c).drawImage(i, 0, 0); this.photo = c; });
     } catch { /* nothing saved */ }
   }
   /** Keeps a copy in "My stickers". Newest first; the oldest fall off the end. */
@@ -322,7 +326,15 @@ export class Studio {
   }
   forget(i: number) { this.gallery = this.gallery.filter((_, k) => k !== i); this.storeGallery(); play('undo'); this.emit(); }
   private storeGallery() { try { localStorage.setItem(GALLERY_KEY, JSON.stringify(this.gallery)); return true; } catch { return false; } }
+  /** Forgets every saved sticker and the one on screen (grown-ups panel). */
+  eraseAll() {
+    this.undoStack = []; this.redoStack = []; this.wipe(); this.gallery = [];
+    try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem(GALLERY_KEY); } catch { /* ignore */ }
+    clearTimeout(this.saveTimer); this.emit(); this.render();
+  }
+  get hasPhoto() { return !!this.photo; }
   open(url: string) {
+    if (!isPng(url)) return;
     const i = new Image();
     i.onload = () => { this.begin(); this.wipe(); this.ictx.drawImage(i, 0, 0); play('pop'); this.done(); };
     i.src = url;
@@ -330,4 +342,4 @@ export class Studio {
 }
 
 export const studio = new Studio();
-(window as unknown as { __studio: Studio }).__studio = studio;   // handy in the console and for scripts/tour.mjs
+if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) (window as unknown as { __studio: Studio }).__studio = studio;   // for scripts/tour.mjs; not on the live site

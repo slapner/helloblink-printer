@@ -56,7 +56,7 @@ export function HoldButton({ ms = 2000, onHeld, children, label }: { ms?: number
   const start = () => { clearTimeout(t.current); setHolding(true); t.current = window.setTimeout(() => { setHolding(false); onHeld(); }, ms); };
   useEffect(() => stop, []);
   return (
-    <button className={'btn round hold' + (holding ? ' holding' : '')} style={{ ['--ms' as string]: ms + 'ms' }} aria-label={label} title={label}
+    <button className={'btn round hold' + (holding ? ' holding' : '')} style={{ ['--ms' as string]: ms + 'ms' }} aria-label={label}
       onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} onContextMenu={(e) => e.preventDefault()}>
       {children}
     </button>

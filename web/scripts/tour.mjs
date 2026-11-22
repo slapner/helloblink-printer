@@ -102,6 +102,11 @@ const checks = {};
   // grown-ups: a tap must not open it, a two second hold must
   const lock = page.locator('.hold'); await lock.click(); checks.tapOpensGrownups = await page.locator('.grown').count();
   const lb = await lock.boundingBox(); await page.mouse.move(lb.x + 20, lb.y + 20); await page.mouse.down(); await page.waitForTimeout(2200); await page.mouse.up();
+  checks.holdShowsSum = await page.locator('.modal .sum').count();
+  const [a, b] = (await page.locator('.modal .sum').innerText()).match(/\d+/g).map(Number);
+  await page.locator('.modal .answer').fill('1'); await page.keyboard.press('Enter'); checks.wrongAnswerOpens = await page.locator('.grown').count();
+  await page.mouse.move(lb.x + 20, lb.y + 20); await page.mouse.down(); await page.waitForTimeout(2200); await page.mouse.up();
+  const [c, d] = (await page.locator('.modal .sum').innerText()).match(/\d+/g).map(Number); await page.locator('.modal .answer').fill(String(c * d)); await page.keyboard.press('Enter');
   checks.holdOpensGrownups = await page.locator('.grown').count(); await shot('13-grown-ups');
   await page.keyboard.press('Escape');
 

@@ -5,3 +5,6 @@ apk/
 node_modules/
 dist/
 shots/
+.wrangler/
+.env*
+.dev.vars

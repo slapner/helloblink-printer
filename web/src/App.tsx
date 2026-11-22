@@ -36,7 +36,7 @@ export default function App() {
   const [thenPrint, setThenPrint] = useState(true);
   const wakeTicket = useRef(0);   // closing the wake card cancels the print that was waiting on it
   const closeWake = () => { wakeTicket.current++; setPhase(null); };
-  const [panel, setPanel] = useState<null | 'gallery' | 'camera' | 'grownups'>(null);
+  const [panel, setPanel] = useState<null | 'gallery' | 'camera' | 'gate' | 'grownups'>(null);
   const [toast, setToast] = useState('');
   const [muted, setMute] = useState(isMuted());
   const [copies, setCopies] = useState(1);
@@ -80,9 +80,11 @@ export default function App() {
   function pickTool(id: Tool) { play('tap'); studio.set({ tool: id }); }
   function loadFile(f?: File | null) {
     if (!f || !f.type.startsWith('image/')) return;
+    const sorry = () => { play('oops'); setToast("That picture wouldn't open. Try another one!"); };
+    if (f.size > 40 * 1024 * 1024) return sorry();                                   // absurdly large files can freeze the page
     const img = new Image();
-    img.onload = () => { studio.setPhoto(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(img.src); };
-    img.onerror = () => { play('oops'); setToast("That picture wouldn't open. Try another one!"); };
+    img.onload = () => { if (img.naturalWidth * img.naturalHeight <= 80e6) studio.setPhoto(img, img.naturalWidth, img.naturalHeight); else sorry(); URL.revokeObjectURL(img.src); };
+    img.onerror = () => { URL.revokeObjectURL(img.src); sorry(); };
     img.src = URL.createObjectURL(f);
   }
 
@@ -93,7 +95,7 @@ export default function App() {
       ok = true;
       for (let i = 0; i <= 30; i++) { setFake(i / 30); await new Promise((r) => setTimeout(r, 70)); }
     } else ok = await printer.sendRows(studio.printRows(inset, tail, copies));
-    if (ok) { studio.keep(); play('tada'); setPhase('done'); } else { play('oops'); setPhase('failed'); }
+    if (ok) { if (!studio.hasPhoto) studio.keep(); play('tada'); setPhase('done'); }   // photos are only saved when someone presses Keep else { play('oops'); setPhase('failed'); }
   }
   async function onPrint() {
     if (phase === 'printing' || printer.state === 'printing') return;
@@ -125,7 +127,7 @@ export default function App() {
           </button>
           <button className="btn pill" onClick={() => { play('tap'); setPanel('gallery'); }}><Icon name="grid" size={26} /><span>My stickers</span>{studio.gallery.length > 0 && <b className="count">{studio.gallery.length}</b>}</button>
           <button className="btn round" aria-label={muted ? 'Sound on' : 'Sound off'} onClick={() => { setMuted(!muted); setMute(!muted); if (muted) play('tap'); }}><Icon name={muted ? 'mute' : 'sound'} size={26} /></button>
-          <HoldButton label="Grown-ups: hold for two seconds" onHeld={() => setPanel('grownups')}><Icon name="lock" size={26} /></HoldButton>
+          <HoldButton label="Grown-ups" onHeld={() => setPanel('gate')}><Icon name="lock" size={26} /></HoldButton>
         </div>
       </header>
 
@@ -261,6 +263,7 @@ export default function App() {
         </Modal>
       )}
       {panel === 'camera' && <Camera onClose={() => setPanel(null)} />}
+      {panel === 'gate' && <Gate onClose={() => setPanel(null)} onPass={() => setPanel('grownups')} />}
       {panel === 'grownups' && (
         <Modal onClose={() => setPanel(null)} label="Grown-ups" className="grown">
           <h2>Grown-ups</h2>
@@ -275,6 +278,7 @@ export default function App() {
           <label>Shrink the print towards the middle: {inset} dots<input type="range" min={0} max={80} value={inset} onChange={(e) => setInset(+e.target.value)} /></label>
           <label>Blank rows fed after each sticker<input type="number" min={0} max={2000} value={tail} onChange={(e) => setTail(Math.max(0, Math.min(2000, +e.target.value || 0)))} /></label>
           <RawHex />
+          <div className="row"><button className="btn small" onClick={() => { if (confirm('Erase the sticker on screen, everything in My stickers, and the saved name? This cannot be undone.')) { studio.eraseAll(); setName(''); setToast('Everything erased.'); } }}>Erase everything saved on this computer</button></div>
           <pre className="log">{printer.log.map((l, i) => <div key={i} className={l.bad ? 'bad' : ''}>{l.text}</div>)}</pre>
         </Modal>
       )}
@@ -415,6 +419,22 @@ function Camera({ onClose }: { onClose: () => void }) {
       {state === 'none' ? <><h2>The camera is hiding</h2><p>Ask a grown-up to let this page use the camera.</p></> : (
         <button className="btn print" disabled={state !== 'live'} onClick={snap}><Icon name="camera" size={36} /><span>Snap!</span></button>
       )}
+    </Modal>
+  );
+}
+
+/** A sum a small child can't do, so the settings (and the raw printer commands in them) stay with adults. */
+function Gate({ onClose, onPass }: { onClose: () => void; onPass: () => void }) {
+  const [q] = useState(() => [12 + Math.floor(Math.random() * 8), 6 + Math.floor(Math.random() * 4)]);
+  const [v, setV] = useState('');
+  return (
+    <Modal onClose={onClose} label="Grown-ups only" className="center">
+      <h2>Grown-ups only</h2>
+      <p className="sum">What is {q[0]} × {q[1]}?</p>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); if (+v === q[0] * q[1]) onPass(); else { play('oops'); onClose(); } }}>
+        <input className="answer" inputMode="numeric" autoFocus value={v} aria-label="Answer" onChange={(e) => setV(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+        <button className="btn big" type="submit">OK</button>
+      </form>
     </Modal>
   );
 }
