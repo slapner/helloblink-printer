@@ -8,9 +8,9 @@ const NT = '49535343-1e4d-4bd9-ba61-23c647249616';
 export const ROW_HDR = [0x1d, 0x76, 0x30, 0x00, WB, 0x00, 0x01, 0x00];
 
 /** bits: W*H entries, non-zero = black. Returns one 48-byte row per image row. */
-export function packRows(bits: Uint8Array): Uint8Array[] {
+export function packRows(bits: Uint8Array, h = H): Uint8Array[] {
   const rows: Uint8Array[] = [];
-  for (let y = 0; y < H; y++) {
+  for (let y = 0; y < h; y++) {
     const r = new Uint8Array(WB);
     for (let x = 0; x < W; x++) if (bits[y * W + x]) r[x >> 3] |= 0x80 >> (x & 7);
     rows.push(r);

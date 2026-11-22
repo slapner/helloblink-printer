@@ -7,7 +7,8 @@ import { play } from './sound';
 export type Tool = 'draw' | 'fill' | 'stamp' | 'words' | 'frame' | 'photo' | 'badge' | 'magic';
 export interface Doc { frame: string; frameEmoji: string; top: string; mid: string; bottom: string; font: number }
 export interface Opts { tool: Tool; pen: number; eraserSize: number; eraser: boolean; pattern: string; mirror: 1 | 2 | 4 | 12; stamp: Stamp; stampSize: number; fillPattern: string }
-interface Snap { ink: ImageData; photo: HTMLCanvasElement | null; grey: Float32Array | null; level: number; doc: Doc }
+interface View { z: number; x: number; y: number }   // photo zoom (1 = just fills the sticker) and offset in dots
+interface Snap { ink: ImageData; photo: HTMLCanvasElement | null; src: HTMLCanvasElement | null; view: View; level: number; doc: Doc }
 
 const C = W / 2;
 export const PENS = [5, 12, 24, 44];
@@ -22,7 +23,10 @@ export class Studio {
   ink = makeCanvas(); private ictx = ctx2d(this.ink);
   private comp = makeCanvas(); private cctx = ctx2d(this.comp);
   photo: HTMLCanvasElement | null = null;       // already dithered to black/white
-  private grey: Float32Array | null = null;     // its greyscale source, so brightness can change
+  private src: HTMLCanvasElement | null = null; // the original picture, so it can be moved, zoomed and re-brightened
+  private pv: View = { z: 1, x: 0, y: 0 };
+  private gesture: Map<number, [number, number]> | null = null;   // fingers (or the mouse) currently moving the photo
+  private photoDirty = false;                   // re-dither once per frame, not once per pointer event
   photoLevel = 0;
   doc: Doc = { ...EMPTY };
   opts: Opts = { tool: 'draw', pen: 12, eraserSize: 24, eraser: false, pattern: 'solid', mirror: 1, stamp: { kind: 'emoji', v: '🦄' }, stampSize: 110, fillPattern: 'dots' };
@@ -38,8 +42,8 @@ export class Studio {
   private stamping: number | null = null;
   private lastEdit = '';
   private viewData: ImageData | null = null;
-  /** False for a photo restored after a reload: its greyscale source is not saved, so brightness can't change. */
-  get canTunePhoto() { return !!this.grey; }
+  /** False for a photo restored after a reload: the original picture is not saved, so it can't be moved or re-brightened. */
+  get canTunePhoto() { return !!this.src; }
 
   constructor() { this.restore(); }
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
@@ -52,6 +56,7 @@ export class Studio {
 
   /** Next bigger or smaller pen, eraser or stamp, whichever is in use. */
   nudgeSize(dir: 1 | -1) {
+    if (this.opts.tool === 'photo') { this.zoomPhoto(dir > 0 ? 1.15 : 1 / 1.15); return; }
     if (this.opts.tool !== 'draw' && this.opts.tool !== 'stamp') return;
     const o = this.opts, stamp = o.tool === 'stamp', list = stamp ? STAMP_SIZES : PENS, now = stamp ? o.stampSize : o.eraser ? o.eraserSize : o.pen;
     const i = Math.max(0, Math.min(list.length - 1, list.indexOf(now) + dir)), keepGhost = this.ghost, keepHover = this.hover;
@@ -60,8 +65,8 @@ export class Studio {
   }
 
   // ---- history ----
-  private snap(): Snap { return { ink: this.ictx.getImageData(0, 0, W, H), photo: this.photo, grey: this.grey, level: this.photoLevel, doc: { ...this.doc } }; }
-  private put(s: Snap) { this.stroke = null; this.ictx.putImageData(s.ink, 0, 0); this.photo = s.photo; this.grey = s.grey; this.photoLevel = s.level; this.doc = { ...s.doc }; }
+  private snap(): Snap { return { ink: this.ictx.getImageData(0, 0, W, H), photo: this.photo, src: this.src, view: { ...this.pv }, level: this.photoLevel, doc: { ...this.doc } }; }
+  private put(s: Snap) { this.stroke = null; this.ictx.putImageData(s.ink, 0, 0); this.gesture = null; this.photoDirty = false; this.photo = s.photo; this.src = s.src; this.pv = { ...s.view }; this.photoLevel = s.level; this.doc = { ...s.doc }; }
   /** Call before every change that should be one Undo step. */
   private begin(kind = '') {
     this.lastEdit = kind;
@@ -72,7 +77,7 @@ export class Studio {
   undo() { const s = this.undoStack.pop(); if (!s) return; this.redoStack.push(this.snap()); this.put(s); this.lastEdit = ''; play('undo'); this.done(); }
   redo() { const s = this.redoStack.pop(); if (!s) return; this.undoStack.push(this.snap()); this.put(s); this.lastEdit = ''; play('tap'); this.done(); }
   clear() { if (this.isBlank()) return; this.begin(); this.wipe(); play('clear'); this.done(); }
-  private wipe() { this.stroke = null; this.ictx.clearRect(0, 0, W, H); this.photo = null; this.grey = null; this.photoLevel = 0; this.doc = { ...EMPTY }; }
+  private wipe() { this.stroke = null; this.ictx.clearRect(0, 0, W, H); this.gesture = null; this.photoDirty = false; this.photo = null; this.src = null; this.pv = { z: 1, x: 0, y: 0 }; this.photoLevel = 0; this.doc = { ...EMPTY }; }
 
   // ---- words, frames ----
   setWords(slot: 'top' | 'mid' | 'bottom', v: string) {
@@ -87,6 +92,7 @@ export class Studio {
 
   // ---- composite ----
   private paint(c: CanvasRenderingContext2D, extras = true) {
+    if (this.photoDirty) { this.photoDirty = false; this.redither(); }
     c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
     c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
     if (this.photo) c.drawImage(this.photo, 0, 0);
@@ -95,20 +101,20 @@ export class Studio {
     c.restore();
   }
   /** The sticker as dots, 1 = black. inset shrinks the whole picture towards the middle (grown-ups setting). */
-  bits(inset = 0, extras = true): Uint8Array {
+  bits(inset = 0, extras = true, dx = 0): Uint8Array {
     this.paint(this.cctx, extras);
-    if (inset > 0) {
+    if (inset > 0 || dx !== 0) {
       const t = makeCanvas(), x = ctx2d(t); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
       x.imageSmoothingEnabled = false;   // keep dither dots as dots; smoothing would turn them into grey mush
-      x.drawImage(this.comp, inset, inset, W - 2 * inset, H - 2 * inset); this.cctx.drawImage(t, 0, 0);
+      x.drawImage(this.comp, inset + dx, inset, W - 2 * inset, H - 2 * inset); this.cctx.drawImage(t, 0, 0);
     }
     const d = this.cctx.getImageData(0, 0, W, H).data, out = new Uint8Array(W * H);
     for (let i = 0; i < W * H; i++) out[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2] < 128 ? 1 : 0;
     return out;
   }
   isBlank() { return !this.bits().some(Boolean); }
-  printRows(inset: number, tail: number, copies: number): Uint8Array[] {
-    const one = packRows(this.bits(inset)).concat(blankRows(tail));
+  printRows(inset: number, tail: number, copies: number, dx = 0): Uint8Array[] {
+    const one = packRows(this.bits(inset, true, dx)).concat(blankRows(tail));
     return Array.from({ length: Math.max(1, copies) }, () => one).flat();
   }
   toDataURL() { return bitsToCanvas(this.bits(), W, H).toDataURL('image/png'); }
@@ -122,13 +128,23 @@ export class Studio {
     };
     const down = (e: PointerEvent) => {
       if (e.button > 0 || this.stroke || this.stamping !== null) return;   // one finger at a time: a resting palm must not cut the line
+      if (this.gesture && this.opts.tool !== 'photo') return;
       e.preventDefault(); try { view.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
       const p = pt(e), t = this.opts.tool;
       if (t === 'stamp') { this.stamping = e.pointerId; this.ghost = { x: p[0], y: p[1] }; this.render(); }
       else if (t === 'fill') this.fillAt(p[0], p[1]);
+      else if (t === 'photo' && this.src) { if (!this.gesture) { this.begin(); this.gesture = new Map(); } this.gesture.set(e.pointerId, p); this.emit(); }   // one finger moves, two pinch
+      else if (t === 'photo') return;                       // nothing to move yet; don't scribble by accident
       else { if (t !== 'draw') this.set({ tool: 'draw' }); this.begin(); this.stroke = { id: e.pointerId, last: [] }; this.extend([p]); this.emit(); }
     };
     const move = (e: PointerEvent) => {
+      if (this.gesture?.has(e.pointerId)) {
+        const g = this.gesture, before = [...g.values()]; g.set(e.pointerId, pt(e)); const after = [...g.values()];
+        const mid = (a: [number, number][]) => [a.reduce((n, q) => n + q[0], 0) / a.length, a.reduce((n, q) => n + q[1], 0) / a.length];
+        const spread = (a: [number, number][]) => Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
+        const m0 = mid(before), m1 = mid(after), f = after.length >= 2 && spread(before) > 8 ? spread(after) / spread(before) : 1;
+        this.nudgeView(f, m0[0], m0[1], m1[0] - m0[0], m1[1] - m0[1]); this.render(); return;
+      }
       if (e.pointerType === 'mouse' && this.opts.tool === 'draw') { this.hover = pt(e); this.render(); }
       if (this.stroke && e.pointerId === this.stroke.id) {
         const evs = e.getCoalescedEvents?.() ?? []; this.extend(evs.length ? evs.map(pt) : [pt(e)]);
@@ -137,6 +153,7 @@ export class Studio {
       }
     };
     const up = (e: PointerEvent) => {
+      if (this.gesture?.delete(e.pointerId)) { if (!this.gesture.size) { this.gesture = null; this.done(); } return; }
       if (this.stroke && e.pointerId === this.stroke.id) { this.stroke = null; this.autosave(); }
       if (this.stamping === e.pointerId) {
         this.stamping = null; const p = pt(e);
@@ -148,6 +165,10 @@ export class Studio {
     const leave = () => { if (this.hover) { this.hover = null; this.render(); } if (this.stamping === null && this.ghost) { this.ghost = null; this.render(); } };
     let spun = 0, last = 0, stepped = false;
     const wheel = (e: WheelEvent) => {   // scroll over the sticker to change pen or stamp size
+      if (this.opts.tool === 'photo' && this.src) {                          // scroll or pinch to zoom the photo
+        e.preventDefault(); const r = view.getBoundingClientRect();
+        this.zoomPhoto(Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.0025)), ((e.clientX - r.left) * W) / r.width, ((e.clientY - r.top) * H) / r.height, false); return;
+      }
       if (e.ctrlKey || e.metaKey) return;                                    // a trackpad pinch: leave zooming alone
       if (this.opts.tool !== 'draw' && this.opts.tool !== 'stamp') return;
       e.preventDefault();
@@ -232,18 +253,38 @@ export class Studio {
   }
 
   // ---- photo ----
-  setPhoto(src: CanvasImageSource, sw: number, sh: number) {
-    const t = makeCanvas(), x = ctx2d(t); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
-    const s = Math.max(W / sw, H / sh); x.drawImage(src, (W - sw * s) / 2, (H - sh * s) / 2, sw * s, sh * s);
-    this.begin(); this.grey = luma(x.getImageData(0, 0, W, H).data, W * H); this.photoLevel = 0; this.redither(); play('snap'); this.done();
+  setPhoto(img: CanvasImageSource, sw: number, sh: number) {
+    const k = Math.min(1, 1400 / Math.max(sw, sh)), c = makeCanvas(Math.max(1, Math.round(sw * k)), Math.max(1, Math.round(sh * k)));
+    ctx2d(c).drawImage(img, 0, 0, c.width, c.height);
+    this.begin(); this.src = c; this.pv = { z: 1, x: 0, y: 0 }; this.photoLevel = 0; this.redither(); play('snap'); this.done();
   }
   private redither() {
-    if (!this.grey) { this.photo = null; return; }
-    const g = Float32Array.from(this.grey, (v) => (v - 128) * 1.15 + 128 + this.photoLevel * 35);
+    const src = this.src; if (!src) return;
+    const t = makeCanvas(), x = ctx2d(t); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.imageSmoothingQuality = 'high';
+    const s = Math.max(W / src.width, H / src.height) * this.pv.z, w = src.width * s, h = src.height * s;
+    x.drawImage(src, (W - w) / 2 + this.pv.x, (H - h) / 2 + this.pv.y, w, h);
+    const g = luma(x.getImageData(0, 0, W, H).data, W * H);
+    for (let i = 0; i < g.length; i++) g[i] = (g[i] - 128) * 1.15 + 128 + this.photoLevel * 35;
     this.photo = bitsToCanvas(fsDither(g, W, H), W, H);
   }
-  setPhotoLevel(level: number) { if (!this.grey) return; this.begin(); this.photoLevel = Math.max(-2, Math.min(2, level)); this.redither(); play('tap'); this.done(); }
-  removePhoto() { if (!this.photo) return; this.begin(); this.photo = null; this.grey = null; play('undo'); this.done(); }
+  setPhotoLevel(level: number) { if (!this.src) return; this.begin(); this.photoLevel = Math.max(-2, Math.min(2, level)); this.redither(); play('tap'); this.done(); }
+  /** Applies a zoom about (px, py) and keeps a sliver of the picture on the sticker so it can't be lost off the edge. */
+  private nudgeView(factor: number, px: number, py: number, dx = 0, dy = 0) {
+    const src = this.src; if (!src) return;
+    const v = this.pv, z = Math.max(0.25, Math.min(6, v.z * factor)), f = z / v.z;
+    v.x = px - C - (px - C - v.x) * f + dx; v.y = py - C - (py - C - v.y) * f + dy; v.z = z;
+    const s = Math.max(W / src.width, H / src.height) * z, mx = (src.width * s + W) / 2 - 40, my = (src.height * s + H) / 2 - 40;
+    v.x = Math.max(-mx, Math.min(mx, v.x)); v.y = Math.max(-my, Math.min(my, v.y));
+    this.photoDirty = true;
+  }
+  /** Zooms the photo. `step` makes it one Undo step with a click sound (buttons, keys); scrolling passes false. */
+  zoomPhoto(factor: number, px = C, py = C, step = true) {
+    if (!this.src) return;
+    if (step) this.begin(); else if (this.lastEdit !== 'photo-zoom') this.begin('photo-zoom');
+    this.nudgeView(factor, px, py); if (step) play('tap'); this.done();
+  }
+  fitPhoto() { if (!this.src) return; this.begin(); this.pv = { z: 1, x: 0, y: 0 }; this.redither(); play('tap'); this.done(); }
+  removePhoto() { if (!this.photo) return; this.begin(); this.photo = null; this.src = null; play('undo'); this.done(); }
 
   // ---- magic ----
   /** Squashes photo and ink into one layer, then lets fn rewrite the dots. */
@@ -251,7 +292,7 @@ export class Studio {
     const src = this.bits(0, false); this.begin();
     const out = new Uint8Array(W * H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) out[y * W + x] = fn(src, x, y);
-    this.photo = null; this.grey = null; this.ictx.clearRect(0, 0, W, H); this.ictx.drawImage(bitsToCanvas(out, W, H), 0, 0);
+    this.photo = null; this.src = null; this.ictx.clearRect(0, 0, W, H); this.ictx.drawImage(bitsToCanvas(out, W, H), 0, 0);
     play('magic'); this.done();
   }
   effect(kind: 'invert' | 'flip' | 'spin' | 'kaleido' | 'outline') {

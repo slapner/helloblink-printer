@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { BADGES, FONTS, FRAMES, SHAPE_IDS, STAMP_SETS, drawFrame, drawStamp, type Stamp } from './art';
-import { W, blankRows, printer } from './printer';
-import { PATTERNS, patternTile } from './raster';
+import { W, blankRows, packRows, printer } from './printer';
+import { PATTERNS, ctx2d, makeCanvas, patternTile } from './raster';
 import { isMuted, play, setMuted } from './sound';
 import { PENS, STAMP_SIZES, studio, type Tool } from './studio';
 import { HoldButton, Icon, Mini, Modal, useStored } from './ui';
@@ -44,6 +44,7 @@ export default function App() {
   const [inset, setInset] = useStored('print-inset', 0);
   const [tail, setTail] = useStored('print-tail', 120);
   const [practice, setPractice] = useStored('practice', false);
+  const [shiftX, setShiftX] = useStored('print-shift-x', 0);
   const [thunk, setThunk] = useState(0);
 
   useEffect(() => {
@@ -94,7 +95,7 @@ export default function App() {
     if (practice) {
       ok = true;
       for (let i = 0; i <= 30; i++) { setFake(i / 30); await new Promise((r) => setTimeout(r, 70)); }
-    } else ok = await printer.sendRows(studio.printRows(inset, tail, copies));
+    } else ok = await printer.sendRows(studio.printRows(inset, tail, copies, shiftX));
     if (ok) { if (!studio.hasPhoto) studio.keep(); play('tada'); setPhase('done'); }   // photos are only saved when someone presses Keep else { play('oops'); setPhase('failed'); }
   }
   async function onPrint() {
@@ -276,6 +277,8 @@ export default function App() {
           </div>
           <label className="check"><input type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} /> Practice mode: Print plays the animation but sends nothing to the printer</label>
           <label>Shrink the print towards the middle: {inset} dots<input type="range" min={0} max={80} value={inset} onChange={(e) => setInset(+e.target.value)} /></label>
+          <label>Move the print sideways: {shiftX} dots ({shiftX < 0 ? 'left' : shiftX > 0 ? 'right' : 'centred'})<input type="range" min={-40} max={40} value={shiftX} onChange={(e) => setShiftX(+e.target.value)} /></label>
+          <div className="row"><button className="btn small" disabled={printer.state !== 'awake'} onClick={() => void printer.sendRows(rulerRows())}>Print alignment ruler (uses about 2 stickers)</button></div>
           <label>Blank rows fed after each sticker<input type="number" min={0} max={2000} value={tail} onChange={(e) => setTail(Math.max(0, Math.min(2000, +e.target.value || 0)))} /></label>
           <RawHex />
           <div className="row"><button className="btn small" onClick={() => { if (confirm('Erase the sticker on screen, everything in My stickers, and the saved name? This cannot be undone.')) { studio.eraseAll(); setName(''); setToast('Everything erased.'); } }}>Erase everything saved on this computer</button></div>
@@ -371,11 +374,25 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
           <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = ''; }} />
         </div>
         {studio.photo ? (
-          <div className="group">
-            {studio.canTunePhoto && <button className="btn chip wide" disabled={studio.photoLevel >= 2} onClick={() => studio.setPhotoLevel(studio.photoLevel + 1)}><Icon name="sun" /><span>Lighter</span></button>}
-            {studio.canTunePhoto && <button className="btn chip wide" disabled={studio.photoLevel <= -2} onClick={() => studio.setPhotoLevel(studio.photoLevel - 1)}><Icon name="moon" /><span>Darker</span></button>}
-            <button className="btn chip wide" onClick={() => studio.removePhoto()}><Icon name="trash" /><span>Take away</span></button>
-          </div>
+          <>
+            {studio.canTunePhoto ? (
+              <>
+                <p className="hint">Drag the photo to move it. Pinch or scroll to make it bigger or smaller.</p>
+                <div className="group">
+                  <button className="btn chip wide" title="Bigger (press ])" onClick={() => studio.zoomPhoto(1.15)}><Icon name="plus" /><span>Bigger</span></button>
+                  <button className="btn chip wide" title="Smaller (press [)" onClick={() => studio.zoomPhoto(1 / 1.15)}><Icon name="minus" /><span>Smaller</span></button>
+                  <button className="btn chip wide" onClick={() => studio.fitPhoto()}><Icon name="frame" /><span>Fit</span></button>
+                </div>
+                <div className="group">
+                  <button className="btn chip wide" disabled={studio.photoLevel >= 2} onClick={() => studio.setPhotoLevel(studio.photoLevel + 1)}><Icon name="sun" /><span>Lighter</span></button>
+                  <button className="btn chip wide" disabled={studio.photoLevel <= -2} onClick={() => studio.setPhotoLevel(studio.photoLevel - 1)}><Icon name="moon" /><span>Darker</span></button>
+                </div>
+              </>
+            ) : <p className="hint">To move or resize this photo, pick it again.</p>}
+            <div className="group">
+              <button className="btn chip wide" onClick={() => studio.removePhoto()}><Icon name="trash" /><span>Take away</span></button>
+            </div>
+          </>
         ) : <p className="hint">Add a photo, then draw and stamp on top of it.</p>}
       </>
     );
@@ -437,6 +454,22 @@ function Gate({ onClose, onPass }: { onClose: () => void; onPass: () => void }) 
       </form>
     </Modal>
   );
+}
+
+/** A 900-row ruler: numbered lines every 50 rows and numbered columns every 48 dots, to read off where stickers start and end. */
+function rulerRows(): Uint8Array[] {
+  const h = 900, c = makeCanvas(W, h), x = ctx2d(c);
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, h); x.fillStyle = '#000'; x.font = 'bold 20px Helvetica, Arial, sans-serif'; x.textBaseline = 'top';
+  for (let y = 0; y < h; y += 10) {
+    if (y % 50 === 0) { x.fillRect(0, y, W, 2); for (const tx of [30, 150, 270]) x.fillText(String(y), tx, y + 5); }
+    else { x.fillRect(0, y, 10, 1); x.fillRect(W / 2 - 5, y, 10, 1); x.fillRect(W - 10, y, 10, 1); }
+  }
+  x.font = 'bold 14px Helvetica, Arial, sans-serif';
+  for (let i = 0; i <= 8; i++) { const cx = Math.min(W - 2, i * 48); x.fillRect(cx, 0, 2, h); for (let y = 30; y < h; y += 100) x.fillText(String(i), Math.min(W - 12, cx + 4), y); }
+  x.fillRect(0, 0, 2, h); x.fillRect(W - 2, 0, 2, h);
+  const d = x.getImageData(0, 0, W, h).data, bits = new Uint8Array(W * h);
+  for (let i = 0; i < W * h; i++) bits[i] = d[i * 4] < 128 ? 1 : 0;
+  return packRows(bits, h);
 }
 
 function RawHex() {
