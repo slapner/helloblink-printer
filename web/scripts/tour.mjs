@@ -110,11 +110,11 @@ const checks = {};
   await ctx.close();
 }
 // ---------- other window sizes ----------
-for (const [name, w, h] of [['20-mac-1280x720', 1280, 720], ['21-mac-1680x960', 1680, 960], ['22-small-window', 1024, 640], ['23-tablet-portrait', 820, 1106], ['24-phone', 390, 750], ['25-phone-landscape', 844, 390]]) {
+for (const [name, w, h] of [['20-mac-1280x720', 1280, 720], ['21-mac-1680x960', 1680, 960], ['22-small-window', 1024, 640], ['23-tablet-portrait', 820, 1106], ['24-phone', 390, 750], ['25-phone-landscape', 844, 390], ['26-narrow-landscape', 760, 600], ['27-wide-and-short', 1440, 450]]) {
   const { page, tool, tap, shot, ctx } = await open(w, h, /phone/.test(name) ? 3 : 2);
   await page.locator('.surprise').click(); await page.locator('.rail .tool').nth(2).click();
   if (w >= 1000) { await page.keyboard.press('1'); await page.keyboard.press(']'); checks[name + '-keys'] = await page.evaluate(() => [window.__studio.opts.tool, window.__studio.opts.pen]); await page.keyboard.press('3'); }
-  checks[name] = await page.evaluate(() => ({ canvas: document.querySelector('.sticker canvas').clientWidth, crisp: document.querySelector('.sticker canvas').classList.contains('crisp'), labels: getComputedStyle(document.querySelector('.tool span')).display !== 'none', scrollsX: document.documentElement.scrollWidth > innerWidth, scrollsY: document.documentElement.scrollHeight > innerHeight }));
+  checks[name] = await page.evaluate(() => ({ canvas: document.querySelector('.sticker canvas').clientWidth, crisp: document.querySelector('.sticker canvas').classList.contains('crisp'), labels: getComputedStyle(document.querySelector('.tool span')).display !== 'none', overlaps: (() => { const r = (q) => document.querySelector(q).getBoundingClientRect(), hit = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1; const b = r('.backing'); return ['.rail', '.tray', '.go', '.top'].filter((q) => hit(b, r(q))); })(), scrollsX: document.documentElement.scrollWidth > innerWidth, scrollsY: document.documentElement.scrollHeight > innerHeight }));
   await shot(name); await ctx.close();
 }
 await browser.close();

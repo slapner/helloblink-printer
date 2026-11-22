@@ -58,16 +58,19 @@ export default function App() {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       const a = document.activeElement as HTMLElement | null, typing = !!a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && (a as HTMLInputElement).type !== 'range';
-      const k = e.key.toLowerCase(), cmd = e.metaKey || e.ctrlKey;
-      if (cmd && k === 'p') { e.preventDefault(); printRef.current(); return; }          // never the browser's own print dialog
-      if (typing || document.querySelector('.veil')) return;
+      const k = (e.key ?? '').toLowerCase(), cmd = e.metaKey || e.ctrlKey, dialog = !!document.querySelector('.veil');
+      if (cmd && (k === 'p' || k === 's')) {          // never the browser's own Print or Save Page dialogs
+        e.preventDefault();
+        if (!dialog) (k === 'p' ? printRef : keepRef).current();
+        return;
+      }
+      if (typing || dialog) return;
       if (cmd && k === 'z') { e.preventDefault(); e.shiftKey ? studio.redo() : studio.undo(); }
-      else if (cmd && k === 's') { e.preventDefault(); keepRef.current(); }
       else if (cmd || e.altKey) return;
       else if (k >= '1' && k <= '8') { play('tap'); studio.set({ tool: TOOLS[+k - 1].id }); }
       else if (k === ']' || k === '=' || k === '+') studio.nudgeSize(1);
       else if (k === '[' || k === '-') studio.nudgeSize(-1);
-      else if (k === 'e') { play('tap'); studio.set({ tool: 'draw', eraser: !studio.opts.eraser }); }
+      else if (k === 'e') { play('tap'); studio.set({ tool: 'draw', eraser: studio.opts.tool === 'draw' ? !studio.opts.eraser : true }); }
     };
     const paste = (e: ClipboardEvent) => { const f = [...(e.clipboardData?.files ?? [])][0]; if (f) loadFile(f); };
     addEventListener('keydown', key); addEventListener('paste', paste);
@@ -195,7 +198,7 @@ export default function App() {
                 <>
                   <p className="fine">iPhones and iPads don't let Safari or Chrome use Bluetooth. The free Bluefy browser app does. Install it, then open this same address inside Bluefy and tap Connect printer.</p>
                   <a className="btn print" href="https://apps.apple.com/app/id1492822055" target="_blank" rel="noreferrer"><Icon name="printer" size={30} /><span>Get Bluefy</span></a>
-                  <button className="btn big alt" onClick={() => { void navigator.clipboard?.writeText(location.href); setToast('Address copied. Paste it into Bluefy.'); }}>Copy this address</button>
+                  <button className="btn big alt" onClick={async () => { try { await navigator.clipboard.writeText(location.href); setToast('Address copied. Paste it into Bluefy.'); } catch { setToast('Type this into Bluefy: ' + location.host + location.pathname.replace(/\/$/, '')); } }}>Copy this address</button>
                 </>
               ) : IS_ANDROID ? (
                 <>

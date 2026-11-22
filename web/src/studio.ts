@@ -50,6 +50,7 @@ export class Studio {
 
   /** Next bigger or smaller pen, eraser or stamp, whichever is in use. */
   nudgeSize(dir: 1 | -1) {
+    if (this.opts.tool !== 'draw' && this.opts.tool !== 'stamp') return;
     const o = this.opts, stamp = o.tool === 'stamp', list = stamp ? STAMP_SIZES : PENS, now = stamp ? o.stampSize : o.eraser ? o.eraserSize : o.pen;
     const i = Math.max(0, Math.min(list.length - 1, list.indexOf(now) + dir)), keepGhost = this.ghost, keepHover = this.hover;
     if (list[i] === now) return;
@@ -143,11 +144,15 @@ export class Studio {
       }
     };
     const leave = () => { if (this.hover) { this.hover = null; this.render(); } if (this.stamping === null && this.ghost) { this.ghost = null; this.render(); } };
-    let spun = 0;
+    let spun = 0, last = 0, stepped = false;
     const wheel = (e: WheelEvent) => {   // scroll over the sticker to change pen or stamp size
+      if (e.ctrlKey || e.metaKey) return;                                    // a trackpad pinch: leave zooming alone
       if (this.opts.tool !== 'draw' && this.opts.tool !== 'stamp') return;
-      e.preventDefault(); spun += e.deltaY;
-      if (Math.abs(spun) >= 50) { this.nudgeSize(spun < 0 ? 1 : -1); spun = 0; }
+      e.preventDefault();
+      if (e.timeStamp - last > 180) { spun = 0; stepped = false; }           // one size step per swipe, however long it coasts
+      last = e.timeStamp; if (stepped) return;
+      spun += e.deltaY;
+      if (Math.abs(spun) >= 30) { this.nudgeSize(spun < 0 ? 1 : -1); stepped = true; }
     };
     view.addEventListener('wheel', wheel, { passive: false });
     view.addEventListener('pointerdown', down); view.addEventListener('pointermove', move);
