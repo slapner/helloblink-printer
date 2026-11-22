@@ -53,7 +53,7 @@ export function Mini({ px, draw, dep, className }: { px: number; draw: (c: Canva
 export function HoldButton({ ms = 2000, onHeld, children, label }: { ms?: number; onHeld: () => void; children: ReactNode; label: string }) {
   const [holding, setHolding] = useState(false); const t = useRef(0);
   const stop = () => { clearTimeout(t.current); setHolding(false); };
-  const start = () => { setHolding(true); t.current = window.setTimeout(() => { setHolding(false); onHeld(); }, ms); };
+  const start = () => { clearTimeout(t.current); setHolding(true); t.current = window.setTimeout(() => { setHolding(false); onHeld(); }, ms); };
   useEffect(() => stop, []);
   return (
     <button className={'btn round hold' + (holding ? ' holding' : '')} style={{ ['--ms' as string]: ms + 'ms' }} aria-label={label} title={label}

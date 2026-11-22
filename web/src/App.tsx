@@ -33,6 +33,8 @@ export default function App() {
   const [fake, setFake] = useState(0);
   const [preview, setPreview] = useState('');
   const [thenPrint, setThenPrint] = useState(true);
+  const wakeTicket = useRef(0);   // closing the wake card cancels the print that was waiting on it
+  const closeWake = () => { wakeTicket.current++; setPhase(null); };
   const [panel, setPanel] = useState<null | 'gallery' | 'camera' | 'grownups'>(null);
   const [toast, setToast] = useState('');
   const [muted, setMute] = useState(isMuted());
@@ -88,7 +90,9 @@ export default function App() {
     setThenPrint(true); setPhase('wake');
   }
   async function wake() {
-    if (!(await printer.connect())) { play('oops'); return; }
+    const ticket = ++wakeTicket.current, ok = await printer.connect();
+    if (ticket !== wakeTicket.current) return;
+    if (!ok) { play('oops'); return; }
     if (thenPrint) await run(); else { play('magic'); setPhase(null); setToast('The printer is awake!'); }
   }
 
@@ -127,7 +131,7 @@ export default function App() {
       </section>
 
       <div className="acts acts-b">
-        <button className="btn act" onClick={() => { play('tap'); studio.keep(); setToast('Saved to My stickers!'); }}><Icon name="heart" /><span>Keep</span></button>
+        <button className="btn act" onClick={() => { const ok = studio.keep(); play(ok ? 'tap' : 'oops'); setToast(ok ? 'Saved to My stickers!' : studio.isBlank() ? 'Make a sticker first, then keep it!' : 'My stickers is full. Throw some away first.'); }}><Icon name="heart" /><span>Keep</span></button>
         <button className="btn act danger" onClick={() => studio.clear()}><Icon name="trash" /><span>Start over</span></button>
       </div>
 
@@ -145,6 +149,7 @@ export default function App() {
 
       <footer className="go">
         <button className="btn surprise" onClick={() => studio.surprise()}><Icon name="spark" size={34} /><span>Surprise me!</span></button>
+        <button className="btn copy cycle" aria-label={'How many stickers: ' + copies} onClick={() => { play('tap'); setCopies((copies % 3) + 1); }}>×{copies}</button>
         <div className="copies" role="group" aria-label="How many stickers">
           {[1, 2, 3].map((n) => (
             <button key={n} className="btn copy" aria-pressed={copies === n} onClick={() => { play('tap'); setCopies(n); }}>×{n}</button>
@@ -158,7 +163,7 @@ export default function App() {
       {toast && <div className="toast" role="status">{toast}</div>}
 
       {phase === 'wake' && (
-        <Modal onClose={() => setPhase(null)} label="Wake up the printer" className="center">
+        <Modal onClose={closeWake} label="Wake up the printer" className="center">
           <div className={'bigface ' + (printer.state === 'waking' ? 'waking' : 'asleep')}><Icon name="printer" size={96} /><b>z</b><b>z</b><b>z</b></div>
           {printer.state === 'unsupported' ? (
             <>
@@ -254,9 +259,9 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
       <>
         <div className="group">
           {PENS.map((s) => (
-            <button key={s} className="btn chip" aria-pressed={!o.eraser && o.pen === s} aria-label={'Pen size ' + s} onClick={tap(() => studio.set({ pen: s, eraser: false }))}><i className="dot" style={{ width: Math.min(40, s), height: Math.min(40, s) }} /></button>
+            <button key={s} className="btn chip" aria-pressed={(o.eraser ? o.eraserSize : o.pen) === s} aria-label={'Size ' + s} onClick={tap(() => studio.set(o.eraser ? { eraserSize: s } : { pen: s }))}><i className="dot" style={{ width: Math.min(40, s), height: Math.min(40, s) }} /></button>
           ))}
-          <button className="btn chip wide" aria-pressed={o.eraser} onClick={tap(() => studio.set({ eraser: !o.eraser, pen: o.eraser ? o.pen : Math.max(o.pen, 24) }))}><Icon name="eraser" /><span>Rub out</span></button>
+          <button className="btn chip wide" aria-pressed={o.eraser} onClick={tap(() => studio.set({ eraser: !o.eraser }))}><Icon name="eraser" /><span>Rub out</span></button>
         </div>
         <div className="group">{patterns(o.pattern, (id) => studio.set({ pattern: id, eraser: false }))}</div>
         <div className="group">
@@ -386,7 +391,7 @@ function RawHex() {
   };
   return (
     <label>Send raw bytes (hex), for testing
-      <span className="row"><input value={hex} placeholder="1d 67 53" onChange={(e) => setHex(e.target.value)} /><button className="btn small" disabled={!printer.connected} onClick={send}>Send</button></span>
+      <span className="row"><input value={hex} placeholder="1d 67 53" onChange={(e) => setHex(e.target.value)} /><button className="btn small" disabled={printer.state !== 'awake'} onClick={send}>Send</button></span>
     </label>
   );
 }

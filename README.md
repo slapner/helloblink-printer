@@ -4,7 +4,7 @@ Talks to a HelloBlink sticker printer (advertises over Bluetooth LE as `HB-xxxx`
 
 ## Web app: Sticker Studio
 
-A sticker-making studio for children, laid out for an iPad first. React + TypeScript + Vite, in `web/`.
+A sticker-making studio for children, laid out for a phone first (everything on one screen), with tablet and laptop layouts. React + TypeScript + Vite, in `web/`.
 
 ```
 cd web
@@ -21,8 +21,8 @@ Grown-up settings (connection, practice mode, print inset, feed rows, raw bytes,
 
 Printing needs Web Bluetooth, which only works on `https://` or `localhost`:
 
-- Mac, Windows, Android, Chromebook: Chrome or Edge.
-- iPad and iPhone: Safari and Chrome there have no Web Bluetooth. Use a Web Bluetooth browser such as Bluefy, or print from another device.
+- Android phones and tablets, Mac, Windows, Chromebook: Chrome or Edge.
+- iPhone and iPad: Safari and Chrome there have no Web Bluetooth. A Web Bluetooth browser app such as Bluefy may work (not tested with this printer); otherwise print from another device.
 
 The printer takes one connection at a time: close the phone app first.
 `node scripts/tour.mjs <dir>` drives the built app in Chrome (with a stand-in printer) and saves screenshots.

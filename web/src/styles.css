@@ -1,7 +1,8 @@
-/* Sticker Studio. Designed for an iPad first: portrait is the base layout, landscape and phones adapt it. */
+/* Sticker Studio. The phone layout (last block) is the primary target: everything on one screen, no page scroll.
+   Tablets in portrait use the roomier base layout; landscape tablets and laptops get a side panel. */
 :root {
   --ink: #2B2140; --bg: #FFF4D6; --card: #fff; --mute: #6B5F80; --paper: #FFE08A; --go: #22C55E; --bad: #D92D3A; --accent: #4DA3FF;
-  --size: min(576px, 100vw - 250px, 100dvh - 530px);
+  --size: max(160px, min(576px, 100vw - 250px, 100dvh - 530px));
   color-scheme: light;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -100,6 +101,7 @@ input:not([type=checkbox]):not([type=range]) { height: 54px; border: 3px solid v
 .copies { display: flex; gap: 8px; margin-left: 12px; }
 .copy { width: 60px; min-height: 60px; padding: 0; border-radius: 50%; font-size: 20px; }
 .copy[aria-pressed=true] { background: #B9F4CD; }
+.copy.cycle { display: none; background: #B9F4CD; }
 .print { flex: 1; background: var(--go); min-height: 76px; border-radius: 999px; font-size: 30px; gap: 12px; padding: 0 28px; }
 .print.wiggle { animation: wiggle 8s ease-in-out 4s infinite; }
 @keyframes wiggle { 0%, 92%, 100% { rotate: 0deg; } 94% { rotate: -1.5deg; } 96% { rotate: 1.5deg; } 98% { rotate: -1deg; } }
@@ -152,9 +154,9 @@ input:not([type=checkbox]):not([type=range]) { height: 54px; border: 3px solid v
 .log { font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; max-height: 140px; overflow: auto; color: var(--mute); margin: 0; user-select: text; -webkit-user-select: text; }
 .log .bad { color: var(--bad); }
 
-/* ---- iPad landscape and laptops ---- */
-@media (min-width: 1000px) and (orientation: landscape) {
-  :root { --size: min(576px, 100dvh - 150px, 100vw - 580px); }
+/* ---- landscape: tablets, laptops, and short windows ---- */
+@media (orientation: landscape) and (min-width: 1000px), (orientation: landscape) and (max-height: 720px) and (min-width: 560px) {
+  :root { --size: max(140px, min(576px, 100dvh - 150px, 100vw - 580px)); }
   .app { grid-template-columns: 100px minmax(0, 1fr) minmax(0, 178px) minmax(0, 178px); grid-template-rows: auto auto minmax(0, 1fr) auto;
     grid-template-areas: "top top top top" "rail stage actsa actsb" "rail stage tray tray" "rail stage go go"; }
   .rail { grid-template-columns: 1fr; grid-template-rows: repeat(8, minmax(0, 1fr)); }
@@ -167,25 +169,47 @@ input:not([type=checkbox]):not([type=range]) { height: 54px; border: 3px solid v
   .print { flex-basis: 100%; }
   .fields { grid-template-columns: 1fr; }
 }
-@media (min-width: 1000px) and (orientation: landscape) and (max-height: 700px) { .tool span { display: none; } .top h1 { font-size: 22px; } }
+@media (orientation: landscape) and (max-height: 720px) and (min-width: 560px) { .tool span { display: none; } .top h1 { font-size: 22px; } }
+/* a phone on its side */
+@media (orientation: landscape) and (max-height: 520px) and (min-width: 560px) {
+  :root { --size: max(140px, min(100dvh - 104px, 100vw - 460px)); }
+  .app { gap: 8px; padding-top: 6px; padding-bottom: 6px; grid-template-columns: 100px minmax(0, 1fr) minmax(0, 132px) minmax(0, 132px); }
+  .top h1 { font-size: 18px; } .logo { display: none; } .top-right .pill span { display: none; } .top-right .btn { min-height: 40px; } .top-right .round { width: 40px; }
+  .rail { grid-template-columns: 1fr 1fr; grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .backing { padding: 6px; border-radius: 20px; } .peel { display: none; }
+  .act { min-height: 44px; } .act span { display: none; }
+  .tray { padding: 8px; border-radius: 18px; } .chip { width: 48px; height: 48px; } .chip canvas { width: 38px; height: 38px; }
+  .surprise { min-height: 46px; flex: none; width: 46px; padding: 0; border-radius: 50%; } .surprise span { display: none; }
+  .copies { display: none; } .copy.cycle { display: inline-flex; width: 46px; min-height: 46px; }
+  .print { flex: 1; flex-basis: 0; min-height: 50px; font-size: 20px; padding: 0 10px; } .print .icon { width: 26px; height: 26px; }
+}
 
-/* ---- phones ---- */
-@media (max-width: 699px) {
-  :root { --size: min(384px, 100vw - 66px); }
-  .app { height: auto; min-height: 100dvh; grid-template-columns: 1fr 1fr; grid-template-rows: none; grid-template-areas: "top top" "stage stage" "actsa actsb" "rail rail" "tray tray" "go go"; padding-bottom: 12px; }
-  .top h1 { font-size: 20px; } .logo { display: none; }
-  .top-right { gap: 6px; } .top-right .pill span { display: none; } .top-right .btn { min-height: 48px; padding: 0 12px; } .top-right .round { width: 48px; }
-  .acts { flex-direction: row; gap: 8px; } .acts-a { justify-content: flex-start; } .acts-b { justify-content: flex-end; }
-  .act { width: auto; flex: 1; min-height: 56px; flex-direction: row; font-size: 14px; }
-  .act .icon { width: 24px; height: 24px; }
-  .rail { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; } .tool { min-height: 68px; font-size: 14px; }
-  .tray { max-height: 46dvh; }
-  .fields { grid-template-columns: 1fr; }
-  .go { position: sticky; bottom: 0; flex-wrap: wrap; z-index: 5; background: var(--bg); margin: 0 -16px -12px; padding: 10px 16px max(12px, env(safe-area-inset-bottom)); border-top: 3px solid var(--ink); }
-  .surprise { min-height: 60px; font-size: 16px; padding: 0 14px; flex: 1; } .surprise .icon { width: 26px; height: 26px; }
-  .copies { margin-left: 0; gap: 6px; } .copy { width: 50px; min-height: 50px; font-size: 17px; }
-  .print { flex-basis: 100%; min-height: 66px; font-size: 26px; }
-  .toast { bottom: 170px; font-size: 17px; }
+/* ---- phones (the primary layout) ---- */
+@media (max-width: 699px) and (orientation: portrait), (max-width: 559px) {
+  :root { --size: max(160px, min(420px, 100vw - 44px, 100dvh - 440px)); }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "stage" "rail" "tray" "go"; gap: 8px;
+    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
+  .top { gap: 6px; } .top h1 { font-size: clamp(16px, 5vw, 20px); min-width: 0; overflow: hidden; text-overflow: ellipsis; display: block; } .logo { display: none; }
+  .top-right { gap: 6px; flex: none; } .top-right .pill span { display: none; } .top-right .btn { min-height: 44px; padding: 0 10px; box-shadow: 0 3px 0 var(--ink); } .top-right .round { width: 44px; }
+  .backing { padding: 8px; border-radius: 22px; } .peel { display: none; }
+  /* Undo, Redo, Keep and Start over sit in the four empty corners around the round sticker */
+  .acts { grid-area: stage; flex-direction: row; justify-content: space-between; justify-self: center; width: calc(var(--size) + 20px); margin: 5px 0; z-index: 2; pointer-events: none; }
+  .acts-a { align-self: start; } .acts-b { align-self: end; }
+  .act { pointer-events: auto; flex: none; width: 46px; height: 46px; min-height: 0; border-radius: 50%; padding: 0; box-shadow: 0 3px 0 var(--ink); }
+  .act span { display: none; } .act .icon { width: 24px; height: 24px; }
+  .rail { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .tool { min-height: 50px; flex-direction: row; gap: 5px; font-size: 13px; border-radius: 16px; padding: 4px 2px; box-shadow: 0 3px 0 var(--ink); } .tool .icon { width: 24px; height: 24px; }
+  .tray { padding: 10px; border-radius: 20px; border-top-width: 8px; gap: 8px; } .group { gap: 8px; }
+  .chip { width: 52px; height: 52px; border-radius: 16px; } .chip canvas { width: 40px; height: 40px; }
+  .chip.wide { padding: 0 10px; font-size: 14px; } .chip.frame { width: 64px; height: 64px; } .chip.frame canvas { width: 52px; height: 52px; } .chip.badge { height: 54px; }
+  .fields { grid-template-columns: 1fr; gap: 6px; } input:not([type=checkbox]):not([type=range]) { height: 48px; font-size: 18px; }
+  .hint { font-size: 15px; }
+  .go { gap: 8px; }
+  .surprise { flex: none; width: 60px; min-height: 60px; padding: 0; border-radius: 50%; } .surprise span { display: none; }
+  .copies { display: none; } .copy.cycle { display: inline-flex; width: 60px; min-height: 60px; }
+  .print { min-height: 64px; font-size: 26px; padding: 0 16px; }
+  .toast { bottom: 92px; font-size: 16px; padding: 12px 18px; }
+  .modal { padding: 22px 18px; } h2 { font-size: 23px; } .modal p { font-size: 17px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

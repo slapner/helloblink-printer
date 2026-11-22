@@ -38,6 +38,7 @@ class Printer {
   private device: Bt = null;
   private wr: Bt = null;
   private listeners = new Set<Listener>();
+  private attempt = 0;   // bumps on every connect, so a stale silent reconnect can't tear down a newer one
   private bt(): Bt { return (navigator as any).bluetooth; }
 
   constructor() { if (typeof navigator !== 'undefined' && !this.bt()) this.state = 'unsupported'; }
@@ -72,14 +73,15 @@ class Printer {
     if (!this.bt()) { this.set('unsupported'); return false; }
     if (this.connected) return true;
     try {
-      this.set('waking');
+      this.attempt++; this.set('waking');
       const device = await this.bt().requestDevice({ filters: [{ namePrefix: 'HB-' }], optionalServices: [SVC] });
+      if (this.wr) { this.set('awake'); return true; }   // the silent reconnect got there first
       await this.open(device);
       return true;
     } catch (e: any) {
       this.addLog('connect: ' + (e?.message ?? e), e?.name !== 'NotFoundError');
-      this.set('asleep');
-      return false;
+      this.set(this.wr ? 'awake' : 'asleep');
+      return !!this.wr;
     }
   }
 
@@ -90,9 +92,10 @@ class Printer {
       const d = devices.find((x) => (x.name ?? '').startsWith('HB-'));
       if (!d || this.connected || this.state !== 'asleep') return;
       // Stays "asleep" while trying, so a stalled attempt never blocks the Wake up button.
+      const mine = ++this.attempt;
       const timeout = new Promise<never>((_, no) => setTimeout(() => no(new Error('timed out')), 6000));
       try { await Promise.race([this.open(d), timeout]); }
-      catch (e) { if (!this.connected) d.gatt?.disconnect?.(); throw e; }
+      catch (e) { if (!this.wr && this.attempt === mine) d.gatt?.disconnect?.(); throw e; }
     } catch (e: any) { this.addLog('reconnect: ' + (e?.message ?? e)); }
   }
 
@@ -100,6 +103,7 @@ class Printer {
 
   async sendRaw(bytes: number[]) {
     if (!this.wr) throw new Error('not connected');
+    if (this.state !== 'awake') throw new Error('busy printing');
     await this.wr.writeValueWithResponse(Uint8Array.from(bytes));
     this.addLog('→ ' + bytes.map((x) => x.toString(16).padStart(2, '0')).join(' '));
   }

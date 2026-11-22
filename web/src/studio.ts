@@ -6,7 +6,7 @@ import { play } from './sound';
 
 export type Tool = 'draw' | 'fill' | 'stamp' | 'words' | 'frame' | 'photo' | 'badge' | 'magic';
 export interface Doc { frame: string; frameEmoji: string; top: string; mid: string; bottom: string; font: number }
-export interface Opts { tool: Tool; pen: number; eraser: boolean; pattern: string; mirror: 1 | 2 | 4 | 12; stamp: Stamp; stampSize: number; fillPattern: string }
+export interface Opts { tool: Tool; pen: number; eraserSize: number; eraser: boolean; pattern: string; mirror: 1 | 2 | 4 | 12; stamp: Stamp; stampSize: number; fillPattern: string }
 interface Snap { ink: ImageData; photo: HTMLCanvasElement | null; grey: Float32Array | null; level: number; doc: Doc }
 
 const C = W / 2;
@@ -21,7 +21,7 @@ export class Studio {
   private grey: Float32Array | null = null;     // its greyscale source, so brightness can change
   photoLevel = 0;
   doc: Doc = { ...EMPTY };
-  opts: Opts = { tool: 'draw', pen: 12, eraser: false, pattern: 'solid', mirror: 1, stamp: { kind: 'emoji', v: '🦄' }, stampSize: 110, fillPattern: 'dots' };
+  opts: Opts = { tool: 'draw', pen: 12, eraserSize: 24, eraser: false, pattern: 'solid', mirror: 1, stamp: { kind: 'emoji', v: '🦄' }, stampSize: 110, fillPattern: 'dots' };
   gallery: string[] = [];
   version = 0;
   private undoStack: Snap[] = []; private redoStack: Snap[] = [];
@@ -47,7 +47,7 @@ export class Studio {
 
   // ---- history ----
   private snap(): Snap { return { ink: this.ictx.getImageData(0, 0, W, H), photo: this.photo, grey: this.grey, level: this.photoLevel, doc: { ...this.doc } }; }
-  private put(s: Snap) { this.ictx.putImageData(s.ink, 0, 0); this.photo = s.photo; this.grey = s.grey; this.photoLevel = s.level; this.doc = { ...s.doc }; }
+  private put(s: Snap) { this.stroke = null; this.ictx.putImageData(s.ink, 0, 0); this.photo = s.photo; this.grey = s.grey; this.photoLevel = s.level; this.doc = { ...s.doc }; }
   /** Call before every change that should be one Undo step. */
   private begin(kind = '') {
     this.lastEdit = kind;
@@ -58,7 +58,7 @@ export class Studio {
   undo() { const s = this.undoStack.pop(); if (!s) return; this.redoStack.push(this.snap()); this.put(s); this.lastEdit = ''; play('undo'); this.done(); }
   redo() { const s = this.redoStack.pop(); if (!s) return; this.undoStack.push(this.snap()); this.put(s); this.lastEdit = ''; play('tap'); this.done(); }
   clear() { if (this.isBlank()) return; this.begin(); this.wipe(); play('clear'); this.done(); }
-  private wipe() { this.ictx.clearRect(0, 0, W, H); this.photo = null; this.grey = null; this.photoLevel = 0; this.doc = { ...EMPTY }; }
+  private wipe() { this.stroke = null; this.ictx.clearRect(0, 0, W, H); this.photo = null; this.grey = null; this.photoLevel = 0; this.doc = { ...EMPTY }; }
 
   // ---- words, frames ----
   setWords(slot: 'top' | 'mid' | 'bottom', v: string) {
@@ -85,6 +85,7 @@ export class Studio {
     this.paint(this.cctx, extras);
     if (inset > 0) {
       const t = makeCanvas(), x = ctx2d(t); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
+      x.imageSmoothingEnabled = false;   // keep dither dots as dots; smoothing would turn them into grey mush
       x.drawImage(this.comp, inset, inset, W - 2 * inset, H - 2 * inset); this.cctx.drawImage(t, 0, 0);
     }
     const d = this.cctx.getImageData(0, 0, W, H).data, out = new Uint8Array(W * H);
@@ -106,7 +107,7 @@ export class Studio {
       return [((e.clientX - r.left - view.clientLeft) * W) / view.clientWidth, ((e.clientY - r.top - view.clientTop) * H) / view.clientHeight];
     };
     const down = (e: PointerEvent) => {
-      if (e.button > 0) return;
+      if (e.button > 0 || this.stroke || this.stamping !== null) return;   // one finger at a time: a resting palm must not cut the line
       e.preventDefault(); try { view.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
       const p = pt(e), t = this.opts.tool;
       if (t === 'stamp') { this.stamping = e.pointerId; this.ghost = { x: p[0], y: p[1] }; this.render(); }
@@ -173,14 +174,14 @@ export class Studio {
   private extend(pts: [number, number][]) {
     const s = this.stroke; if (!s) return;
     const c = this.ictx, o = this.opts;
-    c.save(); c.lineCap = c.lineJoin = 'round'; c.lineWidth = o.pen;
+    c.save(); c.lineCap = c.lineJoin = 'round'; const size = o.eraser ? o.eraserSize : o.pen; c.lineWidth = size;
     if (o.eraser) { c.globalCompositeOperation = 'destination-out'; c.strokeStyle = c.fillStyle = '#000'; }
     else { const pat = o.pattern === 'solid' ? '#000' : o.pattern === 'white' ? '#fff' : c.createPattern(patternTile(o.pattern), 'repeat')!; c.strokeStyle = c.fillStyle = pat; }
     for (const p of pts) {
       const im = this.images(p);
       im.forEach((q, i) => {
         const from = s.last[i];
-        if (!from) { c.beginPath(); c.arc(q[0], q[1], o.pen / 2, 0, Math.PI * 2); c.fill(); }
+        if (!from) { c.beginPath(); c.arc(q[0], q[1], size / 2, 0, Math.PI * 2); c.fill(); }
         else { c.beginPath(); c.moveTo(from[0], from[1]); c.lineTo(q[0], q[1]); c.stroke(); }
       });
       s.last = im;
@@ -285,14 +286,14 @@ export class Studio {
     } catch { /* nothing saved */ }
   }
   /** Keeps a copy in "My stickers". Newest first; the oldest fall off the end. */
-  keep() {
-    if (this.isBlank()) return;
-    const url = this.toDataURL(); if (this.gallery[0] === url) return;
+  keep(): boolean {
+    if (this.isBlank()) return false;
+    const url = this.toDataURL(); if (this.gallery[0] === url) return true;
     this.gallery = [url, ...this.gallery.filter((g) => g !== url)].slice(0, GALLERY_MAX);
-    this.storeGallery(); this.emit();
+    const ok = this.storeGallery(); this.emit(); return ok;
   }
   forget(i: number) { this.gallery = this.gallery.filter((_, k) => k !== i); this.storeGallery(); play('undo'); this.emit(); }
-  private storeGallery() { try { localStorage.setItem(GALLERY_KEY, JSON.stringify(this.gallery)); } catch { /* ignore */ } }
+  private storeGallery() { try { localStorage.setItem(GALLERY_KEY, JSON.stringify(this.gallery)); return true; } catch { return false; } }
   open(url: string) {
     const i = new Image();
     i.onload = () => { this.begin(); this.wipe(); this.ictx.drawImage(i, 0, 0); play('pop'); this.done(); };

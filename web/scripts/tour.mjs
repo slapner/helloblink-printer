@@ -110,9 +110,9 @@ const checks = {};
   await ctx.close();
 }
 // ---------- iPad landscape, small iPad, phone ----------
-for (const [name, w, h] of [['20-ipad-landscape', 1180, 745], ['21-ipad-mini-portrait', 744, 1059], ['22-ipad-small-landscape', 1024, 690], ['23-phone', 390, 844]]) {
-  const { page, tool, tap, shot, ctx } = await open(w, h, name === '23-phone' ? 3 : 2);
-  await page.locator('.surprise').click(); await tool('Stamps');
+for (const [name, w, h] of [['20-ipad-landscape', 1180, 745], ['21-ipad-mini-portrait', 744, 1059], ['22-ipad-small-landscape', 1024, 690], ['23-phone', 390, 750], ['24-phone-small', 360, 660], ['25-phone-landscape', 844, 390], ['26-short-window', 900, 600]]) {
+  const { page, tool, tap, shot, ctx } = await open(w, h, /phone/.test(name) ? 3 : 2);
+  await page.locator('.surprise').click(); await page.locator('.rail .tool').nth(2).click();
   checks[name] = await page.evaluate(() => ({ canvas: document.querySelector('.sticker canvas').clientWidth, crisp: document.querySelector('.sticker canvas').classList.contains('crisp'), scrollsX: document.documentElement.scrollWidth > innerWidth, scrollsY: document.documentElement.scrollHeight > innerHeight }));
   await shot(name); await ctx.close();
 }
