@@ -2,15 +2,30 @@
 
 Talks to a HelloBlink sticker printer (advertises over Bluetooth LE as `HB-xxxx`) without the phone app.
 
-## Web app
+## Web app: Sticker Studio
+
+A sticker-making studio for children, laid out for an iPad first. React + TypeScript + Vite, in `web/`.
 
 ```
-cd web && python3 -m http.server 8377
+cd web
+npm install
+npm run dev        # http://localhost:8377, and on your network at http://<this computer's address>:8377
+npm test           # printer protocol tests
+npm run build      # static site in web/dist
 ```
 
-Open http://localhost:8377 in Chrome or Edge (Safari and Firefox have no Web Bluetooth). Click "Connect printer", pick `HB-…`, then Print.
-Artwork comes from one of three tabs: Photo, Text, or Draw (freehand with a mouse, finger or pen).
+What children can do: draw with four pen sizes and fourteen patterns, mirror and snowflake drawing, tap-to-fill with patterns,
+emoji and shape stamps, words that curve round the rim, round frames, photos (file or camera) to draw on, one-tap badges with
+their name, "Surprise me!", magic effects, undo/redo, a "My stickers" shelf, and one to three copies per print.
+Grown-up settings (connection, practice mode, print inset, feed rows, raw bytes, log) open by holding the padlock for two seconds.
+
+Printing needs Web Bluetooth, which only works on `https://` or `localhost`:
+
+- Mac, Windows, Android, Chromebook: Chrome or Edge.
+- iPad and iPhone: Safari and Chrome there have no Web Bluetooth. Use a Web Bluetooth browser such as Bluefy, or print from another device.
+
 The printer takes one connection at a time: close the phone app first.
+`node scripts/tour.mjs <dir>` drives the built app in Chrome (with a stand-in printer) and saves screenshots.
 
 ## Command line
 
