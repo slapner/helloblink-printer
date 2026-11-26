@@ -1,6 +1,6 @@
 // The sticker being made. Drawing is imperative (canvas + pointer events); React only reads `version`.
 import { H, W, blankRows, packRows } from './printer';
-import { BADGES, FRAMES, SHAPE_IDS, SHOUTS, STAMP_SETS, type Badge, type Stamp, drawFrame, drawStamp, drawWords } from './art';
+import { BADGES, FRAMES, SHAPE_IDS, SHOUTS, STAMP_SETS, type Badge, type Shape, type Stamp, drawFrame, drawStamp, drawWords } from './art';
 import { bitsToCanvas, ctx2d, floodMask, fsDither, luma, makeCanvas, patternById, patternTile } from './raster';
 import { play } from './sound';
 
@@ -12,7 +12,8 @@ interface Snap { ink: ImageData; photo: HTMLCanvasElement | null; grey: Float32A
 const C = W / 2;
 const EMPTY: Doc = { frame: 'none', frameEmoji: '⭐', top: '', mid: '', bottom: '', font: 0 };
 const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
-const SAVE_KEY = 'sticker-now', GALLERY_KEY = 'sticker-gallery', GALLERY_MAX = 24;
+const SAVE_KEY = 'sticker-now', GALLERY_KEY = 'sticker-gallery', SHAPE_KEY = 'sticker-shape', GALLERY_MAX = 24;
+export interface Saved { url: string; shape: Shape }
 
 export class Studio {
   ink = makeCanvas(); private ictx = ctx2d(this.ink);
@@ -22,7 +23,9 @@ export class Studio {
   photoLevel = 0;
   doc: Doc = { ...EMPTY };
   opts: Opts = { tool: 'draw', pen: 12, eraserSize: 24, eraser: false, pattern: 'solid', mirror: 1, stamp: { kind: 'emoji', v: '🦄' }, stampSize: 110, fillPattern: 'dots' };
-  gallery: string[] = [];
+  /** Which stickers are on the roll. A setting like the paper itself: not part of the drawing, so Undo and Start over leave it alone. */
+  shape: Shape = 'circle';
+  gallery: Saved[] = [];
   version = 0;
   private undoStack: Snap[] = []; private redoStack: Snap[] = [];
   private listeners = new Set<() => void>();
@@ -43,6 +46,11 @@ export class Studio {
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
 
+  setShape(shape: Shape) {
+    if (shape === this.shape) return;
+    this.shape = shape; try { localStorage.setItem(SHAPE_KEY, shape); } catch { /* storage off */ }
+    play('pop'); this.emit(); this.render();
+  }
   set(o: Partial<Opts>) { this.opts = { ...this.opts, ...o }; this.ghost = null; this.emit(); this.render(); }
 
   // ---- history ----
@@ -77,7 +85,7 @@ export class Studio {
     c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
     if (this.photo) c.drawImage(this.photo, 0, 0);
     c.drawImage(this.ink, 0, 0);
-    if (extras) { if (this.doc.frame !== 'none') drawFrame(c, this.doc.frame, this.doc.frameEmoji); drawWords(c, this.doc, this.doc.frame !== 'none'); }
+    if (extras) { if (this.doc.frame !== 'none') drawFrame(c, this.doc.frame, this.doc.frameEmoji, this.shape); drawWords(c, this.doc, this.doc.frame !== 'none', this.shape); }
     c.restore();
   }
   /** The sticker as dots, 1 = black. inset shrinks the whole picture towards the middle (grown-ups setting). */
@@ -226,7 +234,7 @@ export class Studio {
   }
   effect(kind: 'invert' | 'flip' | 'spin' | 'kaleido' | 'outline') {
     const at = (s: Uint8Array, x: number, y: number) => (x < 0 || y < 0 || x >= W || y >= H ? 0 : s[y * W + x]);
-    if (kind === 'invert') this.remap((s, x, y) => ((x - C) ** 2 + (y - C) ** 2 <= C * C ? 1 - s[y * W + x] : 0));
+    if (kind === 'invert') this.remap((s, x, y) => (this.shape === 'square' || (x - C) ** 2 + (y - C) ** 2 <= C * C ? 1 - s[y * W + x] : 0));
     if (kind === 'flip') this.remap((s, x, y) => s[y * W + (W - 1 - x)]);
     if (kind === 'spin') this.remap((s, x, y) => s[(H - 1 - x) * W + y]);
     if (kind === 'outline') this.remap((s, x, y) => (s[y * W + x] && !(at(s, x - 2, y) && at(s, x + 2, y) && at(s, x, y - 2) && at(s, x, y + 2)) ? 1 : 0));
@@ -277,7 +285,9 @@ export class Studio {
   }
   private restore() {
     try {
-      this.gallery = JSON.parse(localStorage.getItem(GALLERY_KEY) ?? '[]');
+      if (localStorage.getItem(SHAPE_KEY) === 'square') this.shape = 'square';
+      // stickers kept before there were square ones are plain strings, and round
+      this.gallery = (JSON.parse(localStorage.getItem(GALLERY_KEY) ?? '[]') as (string | Saved)[]).map((g) => (typeof g === 'string' ? { url: g, shape: 'circle' } : g));
       const s = JSON.parse(localStorage.getItem(SAVE_KEY) ?? 'null'); if (!s) return;
       this.doc = { ...EMPTY, ...s.doc };
       const load = (url: string, fn: (i: HTMLImageElement) => void) => { const i = new Image(); i.onload = () => { fn(i); this.emit(); this.render(); }; i.src = url; };
@@ -288,8 +298,8 @@ export class Studio {
   /** Keeps a copy in "My stickers". Newest first; the oldest fall off the end. */
   keep(): boolean {
     if (this.isBlank()) return false;
-    const url = this.toDataURL(); if (this.gallery[0] === url) return true;
-    this.gallery = [url, ...this.gallery.filter((g) => g !== url)].slice(0, GALLERY_MAX);
+    const url = this.toDataURL(), same = (g: Saved) => g.url === url && g.shape === this.shape; if (this.gallery[0] && same(this.gallery[0])) return true;
+    this.gallery = [{ url, shape: this.shape }, ...this.gallery.filter((g) => !same(g))].slice(0, GALLERY_MAX);
     const ok = this.storeGallery(); this.emit(); return ok;
   }
   forget(i: number) { this.gallery = this.gallery.filter((_, k) => k !== i); this.storeGallery(); play('undo'); this.emit(); }

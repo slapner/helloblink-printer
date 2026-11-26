@@ -33,6 +33,8 @@ const PATHS: Record<string, string> = {
   heart: 'M12 20s-8-5-8-11a4.5 4.5 0 0 1 8-2.5A4.5 4.5 0 0 1 20 9c0 6-8 11-8 11z',
   line: 'M5 19L19 5',
   check: 'M4 12l5 5L20 6',
+  circle: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+  square: 'M5.5 4h13a1.5 1.5 0 0 1 1.5 1.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4z',
 };
 export function Icon({ name, size = 32 }: { name: string; size?: number }) {
   return (
