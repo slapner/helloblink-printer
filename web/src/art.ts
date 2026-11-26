@@ -4,6 +4,8 @@ import { emojiStamp } from './raster';
 
 const C = W / 2, TAU = Math.PI * 2;
 type Ctx = CanvasRenderingContext2D;
+/** The die-cut of the stickers on the roll. Both print the same 384×384 dots; frames and words follow the edge. */
+export type Shape = 'circle' | 'square';
 
 // ---- shapes (outlined and white inside, so they can be filled with the bucket) ----
 function poly(c: Ctx, pts: [number, number][]) { c.moveTo(...pts[0]); pts.slice(1).forEach((p) => c.lineTo(...p)); c.closePath(); }
@@ -47,9 +49,10 @@ export const STAMP_SETS: { id: string; icon: string; items: string[] }[] = [
 ];
 export const SHAPE_IDS = Object.keys(SHAPES);
 
-// ---- frames that follow the round sticker ----
+// ---- frames that follow the edge of the sticker ----
 export const FRAMES = ['none', 'ring', 'double', 'dots', 'dashes', 'scallop', 'sun', 'zigzag', 'stars', 'hearts', 'checks', 'emoji'] as const;
-export function drawFrame(c: Ctx, id: string, emoji: string) {
+export function drawFrame(c: Ctx, id: string, emoji: string, shape: Shape = 'circle') {
+  if (shape === 'square') return drawSquareFrame(c, id, emoji);
   c.save(); c.fillStyle = c.strokeStyle = '#000'; c.lineJoin = 'round';
   const ring = (r: number, lw: number) => { c.beginPath(); c.arc(C, C, r, 0, TAU); c.lineWidth = lw; c.stroke(); };
   const around = (n: number, r: number, fn: (a: number) => void, off = 0) => { for (let i = 0; i < n; i++) { const a = off + (i * TAU) / n; c.save(); c.translate(C + r * Math.cos(a), C + r * Math.sin(a)); c.rotate(a + Math.PI / 2); fn(a); c.restore(); } };
@@ -65,6 +68,37 @@ export function drawFrame(c: Ctx, id: string, emoji: string) {
     case 'hearts': around(16, 174, () => { c.beginPath(); SHAPES.heart(c, 13); c.fill(); }); break;
     case 'checks': for (let k = 0; k < 2; k++) for (let i = 0; i < 40; i++) if ((i + k) % 2 === 0) { const a0 = (i * TAU) / 40, a1 = ((i + 1) * TAU) / 40, r0 = 164 + k * 13, r1 = r0 + 13; c.beginPath(); c.arc(C, C, r1, a0, a1); c.arc(C, C, r0, a1, a0, true); c.closePath(); c.fill(); } ring(163, 2); break;
     case 'emoji': around(12, 166, () => { const k = emojiStamp(emoji, 44); c.drawImage(k, -k.width / 2, -k.height / 2); }); break;
+  }
+  c.restore();
+}
+
+/** Point i of n round a square of half-side r, clockwise from the top-left corner, and the way out from it. */
+function onSquare(i: number, n: number, r: number): [number, number, number] {
+  const u = (i * 4) / n, side = Math.floor(u) % 4, d = (u - Math.floor(u)) * 2 * r;
+  const [x, y] = ([[-r + d, -r], [r, -r + d], [r - d, r], [-r, r - d]] as const)[side];
+  return [C + x, C + y, (side - 1) * (Math.PI / 2) - (d < 1e-6 ? Math.PI / 4 : 0)];
+}
+/** The same frames along a square edge. Counts are multiples of four, so every corner gets a piece. */
+function drawSquareFrame(c: Ctx, id: string, emoji: string) {
+  c.save(); c.fillStyle = c.strokeStyle = '#000'; c.lineJoin = 'round';
+  const ring = (r: number, lw: number) => { c.lineWidth = lw; c.strokeRect(C - r, C - r, 2 * r, 2 * r); };
+  const around = (n: number, r: number, fn: () => void) => { for (let i = 0; i < n; i++) { const [x, y, a] = onSquare(i, n, r); c.save(); c.translate(x, y); c.rotate(a + Math.PI / 2); fn(); c.restore(); } };
+  switch (id) {
+    case 'ring': ring(180, 9); break;
+    case 'double': ring(182, 7); ring(168, 3); break;
+    case 'dots': around(36, 178, () => { c.beginPath(); c.arc(0, 0, 7.5, 0, TAU); c.fill(); }); break;
+    case 'dashes': c.setLineDash([21.6, 14]); c.lineDashOffset = 10.8; c.lineCap = 'round'; ring(178, 8); break;
+    case 'scallop': c.beginPath(); c.rect(0, 0, W, W); c.rect(C - 176, C - 176, 352, 352); c.fill('evenodd'); around(32, 176, () => { c.beginPath(); c.arc(0, 0, 15, 0, TAU); c.fill(); }); break;
+    case 'sun': around(44, 160, () => { c.beginPath(); c.moveTo(-9, 0); c.lineTo(0, -30); c.lineTo(9, 0); c.closePath(); c.fill(); }); ring(158, 4); break;
+    case 'zigzag': c.beginPath(); for (let i = 0; i < 88; i++) { const [x, y] = onSquare(i, 88, i % 2 ? 166 : 186); c.lineTo(x, y); } c.closePath(); c.lineWidth = 6; c.stroke(); break;
+    case 'stars': around(20, 174, () => { c.beginPath(); poly(c, starPts(5, 15, 6.3)); c.fill(); }); break;
+    case 'hearts': around(20, 174, () => { c.beginPath(); SHAPES.heart(c, 13); c.fill(); }); break;
+    case 'checks': {   // two rows of a 30×30 checkerboard, kept only in the band along the edge
+      const n = 30, o = C - 190, s = 380 / n;
+      c.beginPath(); for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) if ((i + j) % 2 === 0 && (i < 2 || j < 2 || i >= n - 2 || j >= n - 2)) c.rect(o + i * s, o + j * s, s, s);
+      c.fill(); ring(190 - 2 * s, 2); break;
+    }
+    case 'emoji': around(16, 166, () => { const k = emojiStamp(emoji, 44); c.drawImage(k, -k.width / 2, -k.height / 2); }); break;
   }
   c.restore();
 }
@@ -97,7 +131,14 @@ function arcText(c: Ctx, text: string, f: number, R: number, top: boolean) {
     c.save(); c.translate(C + R * Math.cos(a), C + R * Math.sin(a)); c.rotate(top ? a + Math.PI / 2 : a - Math.PI / 2); inked(c, ch, 0, 0, px); c.restore();
   });
 }
-export function drawWords(c: Ctx, w: Words, framed: boolean) {
+/** One straight line across the sticker, shrunk until it fits. */
+function lineText(c: Ctx, text: string, f: number, y: number, box: number) {
+  if (!text) return;
+  let px = 46;
+  for (; px > 14; px -= 2) { c.font = fontCss(f, px); if (c.measureText(text).width <= box) break; }
+  c.textAlign = 'center'; c.textBaseline = 'middle'; inked(c, text, C, y, px);
+}
+export function drawWords(c: Ctx, w: Words, framed: boolean, shape: Shape = 'circle') {
   c.save();
   const R = framed ? 132 : 152;
   if (w.mid.trim()) {
@@ -108,8 +149,8 @@ export function drawWords(c: Ctx, w: Words, framed: boolean) {
     const lh = px * 1.05, y0 = C - ((lines.length - 1) * lh) / 2;
     lines.forEach((l, i) => inked(c, l, C, y0 + i * lh, px));
   }
-  arcText(c, w.top.trim(), w.font, R, true);
-  arcText(c, w.bottom.trim(), w.font, R, false);
+  if (shape === 'square') { const box = framed ? 280 : 340; lineText(c, w.top.trim(), w.font, C - R, box); lineText(c, w.bottom.trim(), w.font, C + R, box); }
+  else { arcText(c, w.top.trim(), w.font, R, true); arcText(c, w.bottom.trim(), w.font, R, false); }
   c.restore();
 }
 

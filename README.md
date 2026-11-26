@@ -17,6 +17,8 @@ npm run build      # static site in web/dist
 What children can do: draw with four pen sizes and fourteen patterns, mirror and snowflake drawing, tap-to-fill with patterns,
 emoji and shape stamps, words that curve round the rim, round frames, photos (file or camera) to draw on, one-tap badges with
 their name, "Surprise me!", magic effects, undo/redo, a "My stickers" shelf, and one to three copies per print.
+The round/square switch beside the copies buttons says which stickers are on the roll: the canvas, frames and words follow that shape
+(words run straight along the top and bottom of a square sticker). Both shapes print the same 384×384 dots.
 Grown-up settings (connection, practice mode, print inset, feed rows, raw bytes, log) open by holding the padlock for two seconds.
 
 Printing needs Web Bluetooth, which only works on `https://` or `localhost`:

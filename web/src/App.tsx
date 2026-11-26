@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { BADGES, FONTS, FRAMES, SHAPE_IDS, STAMP_SETS, drawFrame, drawStamp, type Stamp } from './art';
+import { BADGES, FONTS, FRAMES, SHAPE_IDS, STAMP_SETS, drawFrame, drawStamp, type Shape, type Stamp } from './art';
 import { W, blankRows, printer } from './printer';
 import { PATTERNS, patternTile } from './raster';
 import { isMuted, play, setMuted } from './sound';
@@ -19,6 +19,7 @@ const TOOLS: { id: Tool; label: string; icon: string; color: string }[] = [
 const PENS = [5, 12, 24, 44];
 const STAMP_SIZES = [56, 110, 170, 250];
 const CONFETTI = ['#4DA3FF', '#FFC83D', '#FF8A3D', '#B58CFF', '#FF6B6B', '#3DD6D0', '#5BD68A', '#FF9EC4'];
+const SHAPES: { id: Shape; label: string }[] = [{ id: 'circle', label: 'Round stickers' }, { id: 'square', label: 'Square stickers' }];
 const tileUrl = (id: string) => patternTile(id).toDataURL();
 
 type Phase = null | 'wake' | 'printing' | 'done' | 'failed';
@@ -26,7 +27,7 @@ type Phase = null | 'wake' | 'printing' | 'done' | 'failed';
 export default function App() {
   useSyncExternalStore(studio.subscribe, studio.getVersion);
   useSyncExternalStore(printer.subscribe, printer.getVersion);
-  const o = studio.opts, tool = TOOLS.find((t) => t.id === o.tool)!;
+  const o = studio.opts, tool = TOOLS.find((t) => t.id === o.tool)!, shape = studio.shape;
   const canvas = useRef<HTMLCanvasElement>(null);
   const [crisp, setCrisp] = useState(true);
   const [phase, setPhase] = useState<Phase>(null);
@@ -100,7 +101,7 @@ export default function App() {
   const face = printer.state === 'awake' || printer.state === 'printing' ? 'awake' : printer.state === 'waking' ? 'waking' : 'asleep';
 
   return (
-    <div className="app" style={{ '--accent': tool.color } as CSSProperties}
+    <div className={'app shape-' + shape} style={{ '--accent': tool.color } as CSSProperties}
       onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); }}>
       <header className="top">
         <h1><span className="logo"><Icon name="spark" size={26} /></span>Sticker Studio</h1>
@@ -149,6 +150,12 @@ export default function App() {
 
       <footer className="go">
         <button className="btn surprise" onClick={() => studio.surprise()}><Icon name="spark" size={34} /><span>Surprise me!</span></button>
+        <button className="btn copy cycle shape" aria-label={(shape === 'circle' ? 'Round' : 'Square') + ' stickers. Tap for ' + (shape === 'circle' ? 'square' : 'round')} onClick={() => studio.setShape(shape === 'circle' ? 'square' : 'circle')}><Icon name={shape} size={30} /></button>
+        <div className="copies shapes" role="group" aria-label="Sticker shape">
+          {SHAPES.map((s) => (
+            <button key={s.id} className="btn copy" aria-pressed={shape === s.id} aria-label={s.label} title={s.label} onClick={() => studio.setShape(s.id)}><Icon name={s.id} size={30} /></button>
+          ))}
+        </div>
         <button className="btn copy cycle" aria-label={'How many stickers: ' + copies} onClick={() => { play('tap'); setCopies((copies % 3) + 1); }}>×{copies}</button>
         <div className="copies" role="group" aria-label="How many stickers">
           {[1, 2, 3].map((n) => (
@@ -214,8 +221,8 @@ export default function App() {
           {studio.gallery.length === 0 ? <p>Stickers you print or keep will show up here.</p> : (
             <div className="gallery">
               {studio.gallery.map((g, i) => (
-                <div className="saved" key={g.slice(-48) + i}>
-                  <button className="thumb" aria-label={'Open sticker ' + (i + 1)} onClick={() => { studio.open(g); setPanel(null); }}><img src={g} alt="" /></button>
+                <div className="saved" key={g.shape + g.url.slice(-48) + i}>
+                  <button className={'thumb ' + g.shape} aria-label={'Open sticker ' + (i + 1)} onClick={() => { studio.open(g.url); setPanel(null); }}><img src={g.url} alt="" /></button>
                   <button className="btn round bin" aria-label={'Throw away sticker ' + (i + 1)} onClick={() => studio.forget(i)}><Icon name="trash" size={20} /></button>
                 </div>
               ))}
@@ -302,9 +309,9 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
     case 'words': return (
       <>
         <div className="fields">
-          <label><span>Round the top</span><input value={d.top} maxLength={28} placeholder="SUPER STAR" enterKeyHint="done" onChange={(e) => studio.setWords('top', e.target.value)} /></label>
+          <label><span>{studio.shape === 'square' ? 'Along the top' : 'Round the top'}</span><input value={d.top} maxLength={28} placeholder="SUPER STAR" enterKeyHint="done" onChange={(e) => studio.setWords('top', e.target.value)} /></label>
           <label><span>In the middle</span><input value={d.mid} maxLength={18} placeholder="Hello!" enterKeyHint="done" onChange={(e) => studio.setWords('mid', e.target.value)} /></label>
-          <label><span>Round the bottom</span><input value={d.bottom} maxLength={24} placeholder="YOUR NAME" enterKeyHint="done" onChange={(e) => studio.setWords('bottom', e.target.value)} /></label>
+          <label><span>{studio.shape === 'square' ? 'Along the bottom' : 'Round the bottom'}</span><input value={d.bottom} maxLength={24} placeholder="YOUR NAME" enterKeyHint="done" onChange={(e) => studio.setWords('bottom', e.target.value)} /></label>
         </div>
         <div className="group">
           {FONTS.map((f, i) => (
@@ -317,7 +324,11 @@ function Tray({ name, setName, openCamera, loadFile }: { name: string; setName: 
       <div className="group">
         {FRAMES.map((f) => (
           <button key={f} className="btn chip frame" aria-pressed={d.frame === f} aria-label={f + ' frame'} onClick={() => studio.setFrame(f)}>
-            <Mini px={144} dep={f + (f === 'emoji' ? (o.stamp.kind === 'emoji' ? o.stamp.v : d.frameEmoji) : '')} draw={(c) => { c.scale(144 / W, 144 / W); c.fillStyle = '#fff'; c.beginPath(); c.arc(192, 192, 192, 0, 7); c.fill(); if (f === 'none') { c.strokeStyle = '#bbb'; c.lineWidth = 6; c.setLineDash([16, 16]); c.beginPath(); c.arc(192, 192, 170, 0, 7); c.stroke(); } else drawFrame(c, f, o.stamp.kind === 'emoji' ? o.stamp.v : d.frameEmoji); }} />
+            <Mini px={144} dep={studio.shape + f + (f === 'emoji' ? (o.stamp.kind === 'emoji' ? o.stamp.v : d.frameEmoji) : '')} draw={(c) => {
+              const sq = studio.shape === 'square', edge = (r: number) => { c.beginPath(); if (sq) c.roundRect(192 - r, 192 - r, 2 * r, 2 * r, 14); else c.arc(192, 192, r, 0, 7); };
+              c.scale(144 / W, 144 / W); c.fillStyle = '#fff'; edge(192); c.fill();
+              if (f === 'none') { c.strokeStyle = '#bbb'; c.lineWidth = 6; c.setLineDash([16, 16]); edge(170); c.stroke(); } else drawFrame(c, f, o.stamp.kind === 'emoji' ? o.stamp.v : d.frameEmoji, studio.shape);
+            }} />
           </button>
         ))}
       </div>
